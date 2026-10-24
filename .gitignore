@@ -1,0 +1,21 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# Secret environment & credentials
+.env
+
+# Proxy list (keep proxies.txt private!)
+proxies.txt
+
+# Log files & directories
+logs/
+*.log
+
+# OS & IDE temporary files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -1,0 +1,27 @@
+[package]
+name = "gyroxide"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "gyroxide"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+reqwest = { version = "0.12", features = ["socks", "stream"] }
+tokio-socks = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+url = "2"
+bytes = "1"
+base64 = "0.22"
+dotenvy = "0.15"
+prometheus = { version = "0.13", features = ["process"] }
