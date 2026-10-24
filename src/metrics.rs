@@ -171,9 +171,9 @@ async fn handle_web_request(
     }
 
     if (method == Method::GET || method == Method::HEAD) && (path == "/" || path == "/admin") {
-        let (alive, total) = pm.get_stats().await;
+        let entries = pm.get_proxy_entries().await;
         let proxy_text = pm.get_raw_proxy_text().await;
-        let html = render_dashboard_html(alive, total, &proxy_text, None);
+        let html = render_dashboard_html(&entries, &proxy_text, None);
 
         return Ok(Response::builder()
             .status(StatusCode::OK)
@@ -210,9 +210,9 @@ async fn handle_web_request(
             Err(e) => format!("Failed to update: {}", e),
         };
 
-        let (alive, total) = pm.get_stats().await;
+        let entries = pm.get_proxy_entries().await;
         let proxy_text = pm.get_raw_proxy_text().await;
-        let html = render_dashboard_html(alive, total, &proxy_text, Some(&message));
+        let html = render_dashboard_html(&entries, &proxy_text, Some(&message));
 
         return Ok(Response::builder()
             .status(StatusCode::OK)
@@ -280,7 +280,7 @@ fn check_web_auth(headers: &hyper::HeaderMap, expected_user: &str, expected_pass
 }
 
 
-fn render_dashboard_html(alive: usize, total: usize, proxies_txt: &str, alert: Option<&str>) -> String {
+fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Option<&str>) -> String {
     let alert_box = match alert {
         Some(msg) => format!(
             r#"<div style="padding: 12px 16px; margin-bottom: 20px; border-radius: 8px; background: #064e3b; color: #6ee7b7; border: 1px solid #059669; font-weight: 500;">{}</div>"#,
@@ -288,6 +288,53 @@ fn render_dashboard_html(alive: usize, total: usize, proxies_txt: &str, alert: O
         ),
         None => "".to_string(),
     };
+
+    let total = entries.len();
+    let alive = entries.iter().filter(|p| p.is_alive).count();
+    let dead = total.saturating_sub(alive);
+
+    let mut table_rows = String::new();
+    for (i, p) in entries.iter().enumerate() {
+        let proto = match p.proxy_type {
+            ProxyType::Http => "<span class=\"badge-pill badge-http\">HTTP</span>",
+            ProxyType::Socks5 => "<span class=\"badge-pill badge-socks5\">SOCKS5</span>",
+        };
+        let auth = if let Some(ref u) = p.username {
+            format!("<span class=\"badge-pill badge-auth\" title=\"User: {}\">Auth</span>", html_escape(u))
+        } else {
+            "<span class=\"badge-pill badge-noauth\">No Auth</span>".to_string()
+        };
+        let status = if p.is_alive {
+            "<span class=\"status-pill status-alive\">● ALIVE</span>"
+        } else {
+            "<span class=\"status-pill status-dead\">● DEAD</span>"
+        };
+        let host_port = format!("{}:{}", p.host, p.port);
+        let escaped_addr = html_escape(&host_port);
+
+        table_rows.push_str(&format!(
+            r#"<tr>
+  <td class="col-num">{}</td>
+  <td class="col-addr"><code>{}</code></td>
+  <td>{}</td>
+  <td>{}</td>
+  <td>{}</td>
+  <td class="col-fail">{}</td>
+  <td class="col-act"><button type="button" class="btn-del" onclick="deleteProxyByAddress('{}')">🗑️ Hapus</button></td>
+</tr>"#,
+            i + 1,
+            escaped_addr,
+            proto,
+            auth,
+            status,
+            p.fail_count,
+            escaped_addr
+        ));
+    }
+
+    if table_rows.is_empty() {
+        table_rows = r#"<tr><td colspan="7" class="empty-state">Belum ada proxy di proxies.txt. Tambahkan di form atas atau buka Bulk Editor.</td></tr>"#.to_string();
+    }
 
     let escaped_proxies = html_escape(proxies_txt);
 
@@ -300,15 +347,19 @@ fn render_dashboard_html(alive: usize, total: usize, proxies_txt: &str, alert: O
   <title>Gyroxide Proxy Manager</title>
   <style>
     :root {{
-      --bg: #090d16;
+      --bg: #0b0f19;
       --card-bg: #111827;
-      --border: #1f2937;
+      --card-border: #1f2937;
       --accent: #3b82f6;
       --accent-hover: #2563eb;
       --text: #f9fafb;
       --text-muted: #9ca3af;
       --green: #10b981;
+      --green-bg: rgba(16, 185, 129, 0.15);
       --red: #ef4444;
+      --red-bg: rgba(239, 68, 68, 0.15);
+      --purple: #8b5cf6;
+      --purple-bg: rgba(139, 92, 246, 0.15);
     }}
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
@@ -318,19 +369,19 @@ fn render_dashboard_html(alive: usize, total: usize, proxies_txt: &str, alert: O
       padding: 30px 20px;
     }}
     .container {{
-      max-width: 900px;
+      max-width: 1050px;
       margin: 0 auto;
     }}
     header {{
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 30px;
-      padding-bottom: 20px;
-      border-bottom: 1px solid var(--border);
+      margin-bottom: 24px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--card-border);
     }}
     h1 {{
-      font-size: 26px;
+      font-size: 24px;
       font-weight: 700;
       letter-spacing: -0.5px;
       display: flex;
@@ -346,86 +397,6 @@ fn render_dashboard_html(alive: usize, total: usize, proxies_txt: &str, alert: O
       color: var(--accent);
       border: 1px solid rgba(59, 130, 246, 0.3);
     }}
-    .stats-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
-      margin-bottom: 25px;
-    }}
-    .stat-card {{
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
-    }}
-    .stat-label {{
-      font-size: 13px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-      margin-bottom: 6px;
-    }}
-    .stat-value {{
-      font-size: 28px;
-      font-weight: 700;
-    }}
-    .val-alive {{ color: var(--green); }}
-    .val-dead {{ color: var(--red); }}
-    .card {{
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 24px;
-    }}
-    .card-title {{
-      font-size: 18px;
-      font-weight: 600;
-      margin-bottom: 8px;
-    }}
-    .card-desc {{
-      font-size: 14px;
-      color: var(--text-muted);
-      margin-bottom: 18px;
-      line-height: 1.5;
-    }}
-    textarea {{
-      width: 100%;
-      height: 380px;
-      background: #030712;
-      color: #e5e7eb;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 13.5px;
-      line-height: 1.6;
-      resize: vertical;
-      white-space: pre;
-    }}
-    textarea:focus {{
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-    }}
-    .actions {{
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-top: 18px;
-    }}
-    .btn {{
-      background: var(--accent);
-      color: white;
-      border: none;
-      padding: 12px 26px;
-      font-size: 15px;
-      font-weight: 600;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.15s ease;
-    }}
-    .btn:hover {{ background: var(--accent-hover); }}
     .metrics-link {{
       color: var(--text-muted);
       text-decoration: none;
@@ -433,6 +404,201 @@ fn render_dashboard_html(alive: usize, total: usize, proxies_txt: &str, alert: O
       transition: color 0.15s;
     }}
     .metrics-link:hover {{ color: var(--accent); }}
+    .stats-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }}
+    .stat-card {{
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 18px 20px;
+    }}
+    .stat-label {{
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }}
+    .stat-value {{
+      font-size: 26px;
+      font-weight: 700;
+    }}
+    .val-alive {{ color: var(--green); }}
+    .val-dead {{ color: var(--red); }}
+    .panel {{
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-bottom: 24px;
+    }}
+    .toolbar {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }}
+    .search-input {{
+      flex: 1;
+      min-width: 240px;
+      background: #030712;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-size: 14px;
+    }}
+    .search-input:focus {{
+      outline: none;
+      border-color: var(--accent);
+    }}
+    .quick-add-wrap {{
+      display: flex;
+      gap: 8px;
+      flex: 1.5;
+      min-width: 320px;
+    }}
+    .quick-input {{
+      flex: 1;
+      background: #030712;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-size: 13.5px;
+      font-family: monospace;
+    }}
+    .quick-input:focus {{
+      outline: none;
+      border-color: var(--accent);
+    }}
+    .btn {{
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      white-space: nowrap;
+    }}
+    .btn:hover {{ background: var(--accent-hover); }}
+    .btn-secondary {{
+      background: #1f2937;
+      color: #e5e7eb;
+      border: 1px solid #374151;
+    }}
+    .btn-secondary:hover {{ background: #374151; }}
+    .btn-del {{
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      padding: 6px 12px;
+      font-size: 12.5px;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }}
+    .btn-del:hover {{
+      background: #ef4444;
+      color: white;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }}
+    th {{
+      text-align: left;
+      padding: 12px 14px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--card-border);
+    }}
+    td {{
+      padding: 13px 14px;
+      border-bottom: 1px solid rgba(31, 41, 55, 0.6);
+      vertical-align: middle;
+    }}
+    tr:hover td {{
+      background: rgba(255, 255, 255, 0.02);
+    }}
+    .col-num {{ color: var(--text-muted); font-size: 12px; width: 40px; }}
+    .col-addr code {{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13.5px;
+      color: #93c5fd;
+    }}
+    .col-fail {{ color: var(--text-muted); }}
+    .col-act {{ text-align: right; width: 90px; }}
+    .badge-pill {{
+      display: inline-block;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+    }}
+    .badge-http {{ background: rgba(59, 130, 246, 0.2); color: #60a5fa; }}
+    .badge-socks5 {{ background: var(--purple-bg); color: #c084fc; }}
+    .badge-auth {{ background: rgba(245, 158, 11, 0.15); color: #fbbf24; }}
+    .badge-noauth {{ background: rgba(107, 114, 128, 0.2); color: #9ca3af; }}
+    .status-pill {{
+      display: inline-block;
+      font-size: 11.5px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 12px;
+      letter-spacing: 0.5px;
+    }}
+    .status-alive {{ background: var(--green-bg); color: var(--green); }}
+    .status-dead {{ background: var(--red-bg); color: var(--red); }}
+    .empty-state {{
+      text-align: center;
+      padding: 36px !important;
+      color: var(--text-muted);
+    }}
+    .bulk-section {{
+      display: none;
+      margin-top: 20px;
+      border-top: 1px solid var(--card-border);
+      padding-top: 20px;
+    }}
+    textarea {{
+      width: 100%;
+      height: 300px;
+      background: #030712;
+      color: #e5e7eb;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      resize: vertical;
+      white-space: pre;
+      margin-bottom: 12px;
+    }}
+    textarea:focus {{
+      outline: none;
+      border-color: var(--accent);
+    }}
+    .bulk-actions {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }}
   </style>
 </head>
 <body>
@@ -459,26 +625,108 @@ fn render_dashboard_html(alive: usize, total: usize, proxies_txt: &str, alert: O
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-title">Manage Proxy List</div>
-      <div class="card-desc">
-        Paste bulk proxy kamu di bawah ini (1 baris per proxy). Mendukung format <code>ip:port:user:pass</code>, <code>http://...</code>, dan <code>socks5://...</code>. Klik tombol Simpan untuk auto reload tanpa restart!
-      </div>
-      <form method="POST" action="/admin">
-        <textarea name="proxies" placeholder="Contoh:&#10;45.38.107.97:6014:piholwfu:9bjw4d9t5t6e&#10;socks5://user:pass@1.2.3.4:1080">{escaped_proxies}</textarea>
-        <div class="actions">
-          <span style="font-size: 13px; color: var(--text-muted);">Perubahan langsung aktif seketika.</span>
-          <button type="submit" class="btn">Simpan & Reload Proxies</button>
+    <div class="panel">
+      <div class="toolbar">
+        <input type="text" id="searchInput" class="search-input" placeholder="🔍 Cari IP, port, atau protocol..." oninput="filterProxies()">
+        <div class="quick-add-wrap">
+          <input type="text" id="quickInput" class="quick-input" placeholder="Tambah: ip:port:user:pass" onkeydown="if(event.key==='Enter')quickAddProxy()">
+          <button type="button" class="btn" onclick="quickAddProxy()">+ Tambah</button>
         </div>
-      </form>
+        <button type="button" id="toggleBulkBtn" class="btn btn-secondary" onclick="toggleBulkEditor()">📝 Bulk Editor</button>
+      </div>
+
+      <div style="overflow-x: auto;">
+        <table id="proxyTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Proxy Address</th>
+              <th>Protocol</th>
+              <th>Auth</th>
+              <th>Status</th>
+              <th>Failures</th>
+              <th style="text-align: right;">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            {table_rows}
+          </tbody>
+        </table>
+      </div>
+
+      <div id="bulkSection" class="bulk-section">
+        <h3 style="font-size: 16px; margin-bottom: 8px;">Raw Bulk Editor</h3>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">Edit isi proxies.txt secara langsung (1 baris per proxy). Mendukung format <code>ip:port:user:pass</code> atau <code>socks5://...</code></p>
+        <form id="proxyForm" method="POST" action="/admin">
+          <textarea id="rawProxies" name="proxies">{escaped_proxies}</textarea>
+          <div class="bulk-actions">
+            <span style="font-size: 13px; color: var(--text-muted);">Perubahan langsung disimpan ke proxies.txt & di-reload.</span>
+            <button type="submit" class="btn">💾 Simpan & Reload Semua</button>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
+
+  <script>
+    function deleteProxyByAddress(addr) {{
+      if (!confirm('Hapus proxy ' + addr + ' dari daftar?')) return;
+      const textarea = document.getElementById('rawProxies');
+      const lines = textarea.value.split('\n');
+      let removed = false;
+      const filtered = [];
+      for (const line of lines) {{
+        const trimmed = line.trim();
+        if (!removed && trimmed.length > 0 && trimmed.includes(addr)) {{
+          removed = true;
+          continue;
+        }}
+        filtered.push(line);
+      }}
+      textarea.value = filtered.join('\n');
+      document.getElementById('proxyForm').submit();
+    }}
+
+    function quickAddProxy() {{
+      const input = document.getElementById('quickInput');
+      const val = input.value.trim();
+      if (!val) {{
+        alert('Silakan masukkan format proxy, contoh: ip:port:user:pass');
+        return;
+      }}
+      const textarea = document.getElementById('rawProxies');
+      textarea.value = (textarea.value.trim() ? textarea.value.trim() + '\n' : '') + val;
+      document.getElementById('proxyForm').submit();
+    }}
+
+    function filterProxies() {{
+      const q = document.getElementById('searchInput').value.toLowerCase();
+      const rows = document.querySelectorAll('#proxyTable tbody tr');
+      rows.forEach(r => {{
+        const text = r.innerText.toLowerCase();
+        r.style.display = text.includes(q) ? '' : 'none';
+      }});
+    }}
+
+    function toggleBulkEditor() {{
+      const section = document.getElementById('bulkSection');
+      const btn = document.getElementById('toggleBulkBtn');
+      if (section.style.display === 'none' || section.style.display === '') {{
+        section.style.display = 'block';
+        btn.innerText = '✕ Tutup Bulk Editor';
+      }} else {{
+        section.style.display = 'none';
+        btn.innerText = '📝 Bulk Editor';
+      }}
+    }}
+  </script>
 </body>
 </html>"#,
         alert_box = alert_box,
         total = total,
         alive = alive,
-        dead = total.saturating_sub(alive),
+        dead = dead,
+        table_rows = table_rows,
         escaped_proxies = escaped_proxies
     )
 }
