@@ -4,14 +4,14 @@ use http_body_util::{BodyExt, Full};
 use hyper::{body::Incoming, service::service_fn, Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use prometheus::{
-    register_counter_vec, register_gauge, register_histogram, CounterVec, Encoder, Gauge, Histogram,
-    TextEncoder,
+    register_counter_vec, register_gauge, register_gauge_vec, register_histogram, CounterVec, Encoder,
+    Gauge, GaugeVec, Histogram, TextEncoder,
 };
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
-use crate::proxy_manager::ProxyManager;
+use crate::proxy_manager::{ProxyEntry, ProxyManager, ProxyType};
 
 pub struct Metrics {
     pub requests_total: CounterVec,
@@ -20,6 +20,7 @@ pub struct Metrics {
     pub proxies_alive: Gauge,
     pub proxies_dead: Gauge,
     pub proxy_failures_total: CounterVec,
+    pub proxy_up: GaugeVec,
 }
 
 impl Metrics {
@@ -56,6 +57,12 @@ impl Metrics {
             &["proxy"]
         )?;
 
+        let proxy_up = register_gauge_vec!(
+            "gyroxide_proxy_up",
+            "Status of upstream proxy (1 = alive, 0 = dead)",
+            &["address", "protocol"]
+        )?;
+
         Ok(Self {
             requests_total,
             request_duration_seconds,
@@ -63,13 +70,27 @@ impl Metrics {
             proxies_alive,
             proxies_dead,
             proxy_failures_total,
+            proxy_up,
         })
     }
 
-    pub fn update_proxy_stats(&self, alive: usize, total: usize) {
+    pub fn update_proxy_stats(&self, proxies: &[ProxyEntry]) {
+        let total = proxies.len();
+        let alive = proxies.iter().filter(|p| p.is_alive).count();
         self.proxies_total.set(total as f64);
         self.proxies_alive.set(alive as f64);
         self.proxies_dead.set((total.saturating_sub(alive)) as f64);
+
+        self.proxy_up.reset();
+        for p in proxies {
+            let proto = match p.proxy_type {
+                ProxyType::Http => "http",
+                ProxyType::Socks5 => "socks5",
+            };
+            let addr = format!("{}:{}", p.host, p.port);
+            let val = if p.is_alive { 1.0 } else { 0.0 };
+            self.proxy_up.with_label_values(&[&addr, proto]).set(val);
+        }
     }
 }
 
@@ -116,8 +137,8 @@ async fn handle_web_request(
     let method = req.method().clone();
 
     if method == Method::GET && path == "/metrics" {
-        let (alive, total) = pm.get_stats().await;
-        m.update_proxy_stats(alive, total);
+        let entries = pm.get_proxy_entries().await;
+        m.update_proxy_stats(&entries);
 
         let metric_families = prometheus::gather();
         let encoder = TextEncoder::new();
@@ -182,8 +203,8 @@ async fn handle_web_request(
 
         let message = match pm.update_proxies_from_text(&new_content).await {
             Ok(count) => {
-                let (alive, total) = pm.get_stats().await;
-                m.update_proxy_stats(alive, total);
+                let entries = pm.get_proxy_entries().await;
+                m.update_proxy_stats(&entries);
                 format!("Success! {} valid proxies updated and reloaded.", count)
             }
             Err(e) => format!("Failed to update: {}", e),

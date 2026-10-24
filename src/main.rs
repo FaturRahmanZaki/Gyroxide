@@ -23,8 +23,9 @@ async fn main() -> Result<()> {
     );
 
     let metrics = Arc::new(metrics::Metrics::new()?);
+    let entries = proxy_manager.get_proxy_entries().await;
     let (alive, total) = proxy_manager.get_stats().await;
-    metrics.update_proxy_stats(alive, total);
+    metrics.update_proxy_stats(&entries);
 
     {
         let pm = proxy_manager.clone();

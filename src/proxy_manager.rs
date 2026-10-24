@@ -206,6 +206,10 @@ impl ProxyManager {
         (alive, proxies.len())
     }
 
+    pub async fn get_proxy_entries(&self) -> Vec<ProxyEntry> {
+        self.proxies.read().await.clone()
+    }
+
     pub async fn start_health_check(self: Arc<Self>) {
         let interval = Duration::from_secs(self.config.health_check_interval_secs);
         loop {
