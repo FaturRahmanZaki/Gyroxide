@@ -1,109 +1,109 @@
 # Gyroxide 🌀
 
-**Gyroxide** adalah high-performance auto-rotating proxy gateway berbasis Rust async (`Tokio` + `Hyper`). Gyroxide bertindak sebagai satu pintu gerbang tunggal (1 URL endpoint) yang mendistribusikan request ke ratusan upstream proxy (HTTP, HTTPS, SOCKS5) secara bergilir dengan mekanisme *Smart Round Robin*, auto-skip proxy mati, automatic background health-checking, **Mini Web Dashboard UI**, dan integrasi monitoring **Prometheus & Grafana**.
+**Gyroxide** is a high-performance auto-rotating proxy gateway built with async Rust (`Tokio` + `Hyper`). It acts as a single entry point (1 URL endpoint) that distributes incoming requests across bulk upstream proxies (HTTP, HTTPS, SOCKS5) using **Smart Round Robin**, dead proxy auto-skipping, background health-checking, a **Mini Web Dashboard UI**, and native **Prometheus & Grafana** metrics monitoring.
 
 ---
 
-## Fitur Utama
+## Key Features
 
-- **Single Gateway Endpoint**: Mengarahkan seluruh traffic client ke 1 URL (`http://localhost:8080`).
-- **Multi-Protocol Upstream**: Mendukung upstream proxy jenis **HTTP**, **HTTPS**, dan **SOCKS5** (dengan atau tanpa username/password auth).
-- **Format Otomatis**: Mendukung langsung format provider seperti `ip:port:user:pass` tanpa perlu convert manual.
-- **Smart Round Robin**: Rotasi request otomatis bergilir dan cerdas (otomatis melewati proxy yang berstatus dead/down).
-- **Unlimited Failover Retry**: Jika proxy gagal atau timeout, otomatis mencoba proxy berikutnya sampai menemukan proxy yang aktif.
-- **Background Health Check & Auto Recovery**: Melakukan probe berkala ke proxy mati di background; proxy yang kembali online akan otomatis masuk ke rotasi lagi.
-- **HTTPS Tunneling (CONNECT)**: Mendukung metode HTTP `CONNECT` untuk request HTTPS / SSL secara transparan.
-- **Mini Web Dashboard UI**: Edit, paste, dan reload list proxy langsung dari browser (`/admin`) dengan autentikasi aman tanpa perlu sentuh terminal/SSH.
-- **Prometheus & Grafana Ready**: Menyediakan endpoint `/metrics` bawaan untuk monitoring traffic, latency, dan kesehatan proxy secara live.
-- **Keamanan Tingkat Tinggi**: Dilengkapi Proxy Authentication, Dashboard Auth, dan proteksi Anti-SSRF (pemblokiran akses ke IP internal/private VPS).
+- **Single Gateway Endpoint**: Route all client traffic through a single entry point (`http://localhost:8080`).
+- **Multi-Protocol Upstream**: Supports **HTTP**, **HTTPS**, and **SOCKS5** proxies (with or without username/password authentication).
+- **Auto-Parsing Format**: Seamlessly supports standard proxy provider formats like `ip:port:user:pass` without manual conversion.
+- **Smart Round Robin**: Intelligently rotates proxies per request and skips dead/unreachable proxies.
+- **Unlimited Failover Retry**: Automatically tries the next proxy in the list upon failure or timeout until a working proxy is found.
+- **Background Health Check & Auto Recovery**: Continuously probes dead proxies in the background; revived proxies rejoin rotation automatically.
+- **HTTPS Tunneling (CONNECT)**: Full transparent HTTP `CONNECT` method support for TLS/SSL HTTPS traffic.
+- **Mini Web Dashboard UI**: Edit, paste, and reload proxy lists directly from your browser (`/admin`) with secure Basic Authentication.
+- **Prometheus & Grafana Ready**: Built-in `/metrics` endpoint to monitor traffic, response status codes, latencies, and proxy health in real-time.
+- **Hardened Security**: Features Proxy Authentication, Dashboard Auth, and Anti-SSRF protection (blocks requests targeting private/internal network IPs).
 
 ---
 
-## Struktur Direktori
+## Project Structure
 
 ```text
 Gyroxide/
 ├── src/
-│   ├── main.rs           # Entry point server & socket listener
-│   ├── config.rs         # Model konfigurasi membaca .env
-│   ├── proxy_manager.rs  # Logika rotasi, status tracking, & background health-check
+│   ├── main.rs           # Server entry point & connection listener
+│   ├── config.rs         # Environment configuration parser
+│   ├── proxy_manager.rs  # Rotation logic, health-check, & proxy list manager
 │   ├── handler.rs        # HTTP reverse forwarding & CONNECT tunneling
-│   ├── metrics.rs        # Prometheus metrics exporter & Mini Web Dashboard
-│   └── logger.rs         # Logging subscriber & daily rolling file appender
+│   ├── metrics.rs        # Prometheus exporter & Mini Web Dashboard
+│   └── logger.rs         # Tracing subscriber & daily rolling file logger
 ├── Dockerfile            # Multi-stage production Dockerfile
-├── docker-compose.yml    # Service definition
-├── proxies.txt           # File daftar upstream proxy
-├── .env                  # Konfigurasi environment lokal/VPS
-├── .env.example          # Contoh template konfigurasi
-└── Cargo.toml            # Manifest dependensi Rust
+├── docker-compose.yml    # Docker service definitions
+├── proxies.txt           # Upstream proxy list
+├── .env                  # Environment configuration
+├── .env.example          # Environment template
+└── Cargo.toml            # Rust manifest and dependencies
 ```
 
 ---
 
-## Format List Proxy (`proxies.txt`)
+## Proxy List Format (`proxies.txt`)
 
-Tuliskan 1 proxy per baris. Baris yang diawali tanda `#` atau baris kosong akan diabaikan secara otomatis.
+Place one proxy per line. Lines starting with `#` or empty lines are ignored automatically.
 
 ```text
-# Format standar provider proxy:
+# Standard provider format:
 45.38.107.97:6014:piholwfu:9bjw4d9t5t6e
 
-# HTTP tanpa autentikasi:
+# HTTP without auth:
 1.2.3.4:8080
 http://1.2.3.4:8080
 
-# HTTP dengan autentikasi:
+# HTTP with auth:
 http://username:password@1.2.3.4:8080
 
 # HTTPS Proxy:
 https://1.2.3.4:8443
 
-# SOCKS5 tanpa autentikasi:
+# SOCKS5 without auth:
 socks5://5.6.7.8:1080
 
-# SOCKS5 dengan autentikasi:
+# SOCKS5 with auth:
 socks5://username:password@5.6.7.8:1080
 ```
 
 ---
 
-## Konfigurasi (`.env`)
+## Configuration (`.env`)
 
-Cukup salin dari `.env.example`:
+Copy from `.env.example`:
 
 ```bash
 cp .env.example .env
 ```
 
-Contoh konfigurasi `.env`:
+Configuration parameters:
 ```env
-# Port gateway proxy
+# Gateway proxy port
 PORT=8080
 
-# Port metrics exporter & Web Dashboard
+# Metrics exporter & Web Dashboard port
 METRICS_PORT=9090
 
-# File upstream proxies (1 baris 1 proxy)
+# Upstream proxy file path
 PROXY_FILE=proxies.txt
 
-# File log
+# Log file path
 LOG_FILE=logs/proxy.log
 
-# Kredensial autentikasi (Wajib diisi saat deploy ke VPS!)
-# Digunakan untuk auth Proxy Gateway dan Login Web Dashboard
+# Authentication credentials (Recommended for VPS deployment!)
+# Protects both the proxy gateway and the Web Dashboard
 AUTH_USERNAME=admin
 AUTH_PASSWORD=your_secure_password
 
-# Timeout per request (detik)
+# Request timeout in seconds
 REQUEST_TIMEOUT_SECS=15
 
-# Interval pengecekan proxy mati di background (detik)
+# Background health-check interval in seconds
 HEALTH_CHECK_INTERVAL_SECS=60
 
-# Berapa kali gagal berturut-turut sebelum proxy ditandai dead
+# Number of consecutive failures before marking a proxy dead
 MAX_FAILURES=3
 
-# Blokir request yang mengarah ke jaringan lokal / private VPS (Anti-SSRF)
+# Block requests targeting private/internal IP addresses (Anti-SSRF)
 BLOCK_PRIVATE_IPS=true
 ```
 
@@ -111,94 +111,94 @@ BLOCK_PRIVATE_IPS=true
 
 ## 🖥️ Mini Web Dashboard (`/admin`)
 
-Gyroxide dilengkapi dashboard web modern untuk mengelola proxy tanpa perlu buka SSH terminal.
+Gyroxide includes a modern web dashboard for managing proxies without SSH terminal access.
 
-1. Buka browser: `http://localhost:9090/admin` (atau `http://IP_VPS:9090/admin`)
-2. Masukkan **Username** dan **Password** sesuai `AUTH_USERNAME` dan `AUTH_PASSWORD` di `.env`.
-3. Fitur Dashboard:
-   - **Statistik Realtime**: Total proxy, jumlah proxy aktif (*alive*), dan proxy mati (*dead*).
-   - **Live Editor (Textarea)**: Paste atau hapus bulk proxy kapan saja.
-   - **Simpan & Reload**: Klik tombol simpan, sistem langsung memperbarui list proxy di memory secara instan tanpa perlu restart server!
+1. Open your browser: `http://localhost:9090/admin` (or `http://YOUR_VPS_IP:9090/admin`)
+2. Enter the **Username** and **Password** configured in your `.env`.
+3. Dashboard Highlights:
+   - **Real-time Stats**: View total, active (alive), and dead proxies.
+   - **Bulk Editor (Textarea)**: Paste or remove bulk proxies at any time.
+   - **Instant Save & Reload**: Updates the proxy list in-memory immediately without restarting the server!
 
 ---
 
 ## 📈 Monitoring (Prometheus & Grafana)
 
-Endpoint metrics standar Prometheus tersedia di:
+Prometheus metrics endpoint is available at:
 `http://localhost:9090/metrics`
 
-### 1. Tambahkan Scrape Job di `prometheus.yml`:
+### 1. Prometheus Scrape Configuration (`prometheus.yml`):
 ```yaml
 scrape_configs:
   - job_name: 'gyroxide'
     scrape_interval: 5s
     static_configs:
-      - targets: ['localhost:9090'] # atau IP_VPS:9090
+      - targets: ['localhost:9090'] # or YOUR_VPS_IP:9090
 ```
 
-### 2. Metrik yang Disediakan & Contoh PromQL Grafana:
+### 2. Available Metrics & PromQL Examples:
 
-| Metrik | PromQL Query | Visualisasi |
+| Metric | PromQL Query | Visualization |
 | :--- | :--- | :--- |
 | **Total Proxies** | `gyroxide_proxies_total` | Stat Card |
-| **Active Proxies** | `gyroxide_proxies_alive` | Stat Card (Hijau) |
-| **Dead Proxies** | `gyroxide_proxies_dead` | Stat Card (Merah) |
+| **Active Proxies** | `gyroxide_proxies_alive` | Stat Card (Green) |
+| **Dead Proxies** | `gyroxide_proxies_dead` | Stat Card (Red) |
 | **Request Rate (RPS)** | `sum(rate(gyroxide_requests_total[1m]))` | Time-series Graph |
 | **Status Codes** | `sum by (status) (rate(gyroxide_requests_total[5m]))` | Pie / Bar Chart |
-| **Average Latency** | `rate(gyroxide_request_duration_seconds_sum[1m]) / rate(gyroxide_request_duration_seconds_count[1m])` | Time-series (detik) |
-| **Top Gagal** | `topk(5, gyroxide_proxy_failures_total)` | Bar Gauge / Table |
+| **Average Latency** | `rate(gyroxide_request_duration_seconds_sum[1m]) / rate(gyroxide_request_duration_seconds_count[1m])` | Time-series (seconds) |
+| **Top Failed Proxies** | `topk(5, gyroxide_proxy_failures_total)` | Bar Gauge / Table |
 
 ---
 
-## 🛡️ Panduan Keamanan VPS (Anti-Hacking)
+## 🛡️ VPS Security & Hardening
 
-Saat menjalankan Gyroxide di VPS Linux publik:
+When deploying Gyroxide to a public VPS:
 
-1. **Wajib Pasang Kredensial**:
-   Selalu isi `AUTH_USERNAME` dan `AUTH_PASSWORD` yang kuat di `.env`. Permintaan proxy tanpa autentikasi akan ditolak dengan error `407 Proxy Authentication Required`, dan akses Web Dashboard akan ditolak dengan `401 Unauthorized`.
-2. **Ganti Port Default**:
-   Ganti port default (`PORT=8080`, `METRICS_PORT=9090`) ke port acak di `.env` dan `docker-compose.yml` agar tidak mudah terdeteksi bot scanner publik.
-3. **Anti-SSRF**:
-   Tetap aktifkan `BLOCK_PRIVATE_IPS=true` agar tidak ada pihak luar yang dapat memanfaatkan proxy untuk membobol port lokal VPS (`127.0.0.1`, `localhost`, metadata cloud `169.254.169.254`).
+1. **Always Set Credentials**:
+   Always set strong `AUTH_USERNAME` and `AUTH_PASSWORD` values in `.env`. Unauthenticated proxy requests are rejected with `407 Proxy Authentication Required`, and dashboard requests require `401 Unauthorized` Basic Auth.
+2. **Change Default Ports**:
+   Change default ports (`PORT=8080`, `METRICS_PORT=9090`) to random high ports in `.env` and `docker-compose.yml` to minimize exposure to public port scanners.
+3. **Anti-SSRF Protection**:
+   Keep `BLOCK_PRIVATE_IPS=true` enabled to prevent attackers from using the proxy to scan internal server services (`127.0.0.1`, `localhost`, cloud metadata `169.254.169.254`).
 
 ---
 
-## Cara Menjalankan
+## Deployment & Running
 
-### Menggunakan Docker Compose (Rekomendasi Production):
+### Using Docker Compose (Recommended):
 
-Build image:
+Build the image:
 ```bash
 docker compose build
 ```
 
-Jalankan container di background:
+Run in the background:
 ```bash
 docker compose up -d
 ```
 
-Melihat stream log:
+View real-time logs:
 ```bash
 docker compose logs -f
 ```
 
-Menghentikan container:
+Stop the service:
 ```bash
 docker compose down
 ```
 
 ---
 
-## Contoh Pemakaian di Client
+## Usage Examples
 
-Gunakan URL gateway Gyroxide sebagai proxy HTTP/HTTPS:
+Configure your tools or scripts to use Gyroxide as an HTTP/HTTPS proxy:
 
 ### 1. cURL (Terminal)
 ```bash
-# Tanpa autentikasi (jika AUTH_USERNAME kosong):
+# Without authentication:
 curl.exe -x http://localhost:8080 https://httpbin.org/ip
 
-# Dengan autentikasi:
+# With authentication:
 curl.exe -x http://admin:your_secure_password@localhost:8080 https://httpbin.org/ip
 ```
 
@@ -234,11 +234,11 @@ axios.get('https://httpbin.org/ip', {
 
 ---
 
-## Lisensi
+## License
 
-Proyek ini dilisensikan di bawah lisensi **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
+This project is licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
 
-- **Boleh**: Digunakan untuk kebutuhan pribadi, riset, belajar, edukasi, hobi, dan di-fork/dimodifikasi secara bebas selama bersifat non-komersial.
-- **Tidak Boleh**: Digunakan untuk tujuan komersial, monetisasi, produk berbayar, atau aktivitas bisnis yang menghasilkan pendapatan komersial/finansial.
+- **Permitted**: Use for personal, educational, research, or hobby purposes. Forking and modifying the code is fully allowed under noncommercial terms.
+- **Prohibited**: Commercial use, monetization, paid services, or revenue-generating business operations.
 
-Informasi teks resmi dan legalitas: [polyformproject.org](https://polyformproject.org/licenses/noncommercial/1.0.0).
+For official terms and details, visit [polyformproject.org](https://polyformproject.org/licenses/noncommercial/1.0.0).
