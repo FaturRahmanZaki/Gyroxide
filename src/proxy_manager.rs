@@ -39,6 +39,21 @@ impl ProxyEntry {
 
         let url_str = if raw.contains("://") {
             raw.to_string()
+        } else if raw.contains(char::is_whitespace) {
+            let tokens: Vec<&str> = raw.split_whitespace().collect();
+            if tokens.len() == 2 && tokens[1].parse::<u16>().is_ok() {
+                format!("http://{}:{}", tokens[0], tokens[1])
+            } else if tokens.len() >= 3 && (tokens[0].eq_ignore_ascii_case("http") || tokens[0].eq_ignore_ascii_case("socks5") || tokens[0].eq_ignore_ascii_case("socks4") || tokens[0].eq_ignore_ascii_case("https")) {
+                let scheme = tokens[0].to_lowercase();
+                format!("{}://{}:{}", scheme, tokens[1], tokens[2])
+            } else if tokens.len() >= 3 && (tokens[2].eq_ignore_ascii_case("http") || tokens[2].eq_ignore_ascii_case("socks5") || tokens[2].eq_ignore_ascii_case("socks4") || tokens[2].eq_ignore_ascii_case("https")) {
+                let scheme = tokens[2].to_lowercase();
+                format!("{}://{}:{}", scheme, tokens[0], tokens[1])
+            } else if tokens.len() == 4 && tokens[1].parse::<u16>().is_ok() {
+                format!("http://{}:{}@{}:{}", tokens[2], tokens[3], tokens[0], tokens[1])
+            } else {
+                format!("http://{}", tokens[0])
+            }
         } else {
             let parts: Vec<&str> = raw.split(':').collect();
             if parts.len() == 4 {
@@ -51,7 +66,7 @@ impl ProxyEntry {
         let url = Url::parse(&url_str).ok()?;
 
         let proxy_type = match url.scheme() {
-            "socks5" | "socks5h" => ProxyType::Socks5,
+            "socks5" | "socks5h" | "socks4" => ProxyType::Socks5,
             _ => ProxyType::Http,
         };
 
@@ -198,6 +213,50 @@ impl ProxyManager {
 
         info!("Updated proxy list: {} proxies loaded", count);
         Ok(count)
+    }
+
+    pub async fn append_proxies_from_text(&self, text: &str) -> Result<(usize, usize)> {
+        let p = std::path::Path::new(&self.config.proxy_file);
+        let target_file = if p.is_dir() {
+            p.join("proxies.txt")
+        } else {
+            p.to_path_buf()
+        };
+
+        let mut existing_text = self.get_raw_proxy_text().await;
+        let mut proxies = self.proxies.write().await;
+
+        let mut added_count = 0;
+        let mut to_append = String::new();
+
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if let Some(entry) = ProxyEntry::parse(trimmed) {
+                let exists = proxies.iter().any(|existing| {
+                    existing.host == entry.host && existing.port == entry.port
+                });
+                if !exists {
+                    if !existing_text.ends_with('\n') && !existing_text.is_empty() && to_append.is_empty() {
+                        to_append.push('\n');
+                    }
+                    to_append.push_str(trimmed);
+                    to_append.push('\n');
+                    proxies.push(entry);
+                    added_count += 1;
+                }
+            }
+        }
+
+        if added_count > 0 {
+            existing_text.push_str(&to_append);
+            if let Err(e) = fs::write(&target_file, &existing_text).await {
+                warn!("Failed to write proxies to '{}': {}", target_file.display(), e);
+            }
+        }
+
+        let total = proxies.len();
+        info!("Appended {} new proxies (total {})", added_count, total);
+        Ok((added_count, total))
     }
 
     pub async fn get_stats(&self) -> (usize, usize) {

@@ -194,20 +194,32 @@ async fn handle_web_request(
         };
 
         let raw_str = String::from_utf8_lossy(&body).to_string();
-        let new_content = if raw_str.starts_with("proxies=") {
-            let encoded = &raw_str[8..];
-            urlencoding_decode(encoded)
-        } else {
-            raw_str
-        };
+        let (proxies_input, mode_input) = parse_form_params(&raw_str);
+        let mode = mode_input.unwrap_or_else(|| "append".to_string());
+        let new_content = proxies_input.unwrap_or(raw_str);
 
-        let message = match pm.update_proxies_from_text(&new_content).await {
-            Ok(count) => {
-                let entries = pm.get_proxy_entries().await;
-                m.update_proxy_stats(&entries);
-                format!("Success! {} valid proxies updated and reloaded.", count)
+        let message = if mode == "replace" {
+            match pm.update_proxies_from_text(&new_content).await {
+                Ok(count) => {
+                    let entries = pm.get_proxy_entries().await;
+                    m.update_proxy_stats(&entries);
+                    format!("Berhasil! {} proxy disimpan dan di-reload.", count)
+                }
+                Err(e) => format!("Gagal memperbarui: {}", e),
             }
-            Err(e) => format!("Failed to update: {}", e),
+        } else {
+            match pm.append_proxies_from_text(&new_content).await {
+                Ok((added, total)) => {
+                    let entries = pm.get_proxy_entries().await;
+                    m.update_proxy_stats(&entries);
+                    if added > 0 {
+                        format!("Berhasil menambahkan {} proxy baru! (Total sekarang: {} proxy)", added, total)
+                    } else {
+                        format!("Tidak ada proxy baru yang ditambahkan (semua proxy sudah ada dalam daftar atau format tidak valid). Total: {} proxy", total)
+                    }
+                }
+                Err(e) => format!("Gagal menambahkan: {}", e),
+            }
         };
 
         let entries = pm.get_proxy_entries().await;
@@ -226,6 +238,28 @@ async fn handle_web_request(
         .header("Content-Type", "text/plain")
         .body(Full::new(Bytes::from("404 Not Found")))
         .unwrap())
+}
+
+fn parse_form_params(input: &str) -> (Option<String>, Option<String>) {
+    let mut proxies = None;
+    let mut mode = None;
+
+    if !input.contains('=') {
+        return (None, None);
+    }
+
+    for part in input.split('&') {
+        let mut key_val = part.splitn(2, '=');
+        let key = key_val.next().unwrap_or("");
+        let val = key_val.next().unwrap_or("");
+        if key == "proxies" {
+            proxies = Some(urlencoding_decode(val));
+        } else if key == "mode" {
+            mode = Some(urlencoding_decode(val));
+        }
+    }
+
+    (proxies, mode)
 }
 
 fn urlencoding_decode(input: &str) -> String {
@@ -792,9 +826,36 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
       border-top: 1px solid var(--card-border);
       padding-top: 20px;
     }}
+    .bulk-tabs {{
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 10px;
+    }}
+    .bulk-tab {{
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid transparent;
+      padding: 8px 14px;
+      font-size: 13.5px;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }}
+    .bulk-tab.active {{
+      background: rgba(59, 130, 246, 0.15);
+      color: #93c5fd;
+      border-color: rgba(59, 130, 246, 0.3);
+    }}
+    .bulk-tab:hover:not(.active) {{
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text);
+    }}
     textarea {{
       width: 100%;
-      height: 300px;
+      height: 280px;
       background: #030712;
       color: #e5e7eb;
       border: 1px solid var(--card-border);
@@ -878,8 +939,8 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
             <option value="dead">Dead</option>
           </select>
           <select id="pageSizeSelect" class="select-control" onchange="handlePageSizeChange(this.value)">
-            <option value="10">10 / hal</option>
-            <option value="25" selected>25 / hal</option>
+            <option value="10" selected>10 / hal</option>
+            <option value="25">25 / hal</option>
             <option value="50">50 / hal</option>
             <option value="100">100 / hal</option>
           </select>
@@ -889,7 +950,7 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
             <input type="text" id="quickInput" class="quick-input" placeholder="Tambah: ip:port:user:pass" onkeydown="if(event.key==='Enter')quickAddProxy()">
             <button type="button" class="btn" onclick="quickAddProxy()">+ Tambah</button>
           </div>
-          <button type="button" id="toggleBulkBtn" class="btn btn-secondary" onclick="toggleBulkEditor()">📝 Bulk Editor</button>
+          <button type="button" id="toggleBulkBtn" class="btn btn-secondary" onclick="toggleBulkEditor()">📥 Bulk Upload / Editor</button>
         </div>
       </div>
 
@@ -940,14 +1001,34 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
       </div>
 
       <div id="bulkSection" class="bulk-section">
-        <h3 style="font-size: 16px; margin-bottom: 8px;">Raw Bulk Editor</h3>
-        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">Edit isi proxies.txt secara langsung (1 baris per proxy). Mendukung format <code>ip:port:user:pass</code> atau <code>socks5://...</code></p>
-        <form id="proxyForm" method="POST" action="/admin">
-          <textarea id="rawProxies" name="proxies">{escaped_proxies}</textarea>
+        <div class="bulk-tabs">
+          <button type="button" id="tabUploadBtn" class="bulk-tab active" onclick="switchBulkTab('upload')">📥 Bulk Upload (Tambah Proxy)</button>
+          <button type="button" id="tabRawBtn" class="bulk-tab" onclick="switchBulkTab('raw')">📝 Raw Editor (Lihat / Timpa)</button>
+        </div>
+
+        <div id="bulkUploadPane">
+          <h3 style="font-size: 15px; margin-bottom: 6px;">Bulk Upload Proxies</h3>
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">Tambahkan banyak proxy baru sekaligus. Data lama <strong>TIDAK akan terhapus</strong>, proxy baru otomatis digabungkan dan proxy duplikat otomatis dilewati. Mendukung format <code>ip:port:user:pass</code>, <code>socks5://...</code>, maupun copy-paste tabel dari web (Protocol, IP, Port).</p>
+          <textarea id="bulkUploadInput" placeholder="Paste daftar proxy baru di sini (1 baris per proxy)...&#10;Contoh:&#10;192.168.1.1:8080:user:pass&#10;socks5://user:pass@192.168.1.2:1080&#10;192.168.1.3 8080 HTTP"></textarea>
           <div class="bulk-actions">
-            <span style="font-size: 13px; color: var(--text-muted);">Perubahan langsung disimpan ke proxies.txt & di-reload.</span>
-            <button type="submit" class="btn">💾 Simpan & Reload Semua</button>
+            <span style="font-size: 13px; color: #10b981;">✓ Otomatis menambah ke daftar lama tanpa menghapus proxy yang sudah ada.</span>
+            <button type="button" class="btn" onclick="submitBulkUpload()">➕ Tambahkan ke Daftar</button>
           </div>
+        </div>
+
+        <div id="bulkRawPane" style="display: none;">
+          <h3 style="font-size: 15px; margin-bottom: 6px;">Raw Editor (proxies.txt)</h3>
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">Menampilkan seluruh isi file proxies.txt saat ini. Perhatian: menyimpan dari sini akan menimpa seluruh isi file proxies.txt.</p>
+          <textarea id="rawEditorTextarea">{escaped_proxies}</textarea>
+          <div class="bulk-actions">
+            <span style="font-size: 13px; color: #ef4444;">⚠ Peringatan: Menyimpan di sini akan menimpa seluruh daftar proxy.</span>
+            <button type="button" class="btn btn-secondary" style="border-color: #ef4444; color: #f87171;" onclick="submitRawEditor()">🔄 Simpan & Timpa Semua</button>
+          </div>
+        </div>
+
+        <form id="proxyForm" method="POST" action="/admin" style="display: none;">
+          <input type="hidden" id="formMode" name="mode" value="append">
+          <textarea id="formProxies" name="proxies"></textarea>
         </form>
       </div>
     </div>
@@ -957,7 +1038,7 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
 
   <script>
     let currentPage = 1;
-    let pageSize = 25;
+    let pageSize = 10;
     const selectedAddrs = new Set();
     const selectedRaws = new Map();
     let toastTimer = null;
@@ -1214,11 +1295,48 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
       showToast(list.length + ' proxy diexport ke file');
     }}
 
+    function switchBulkTab(tab) {{
+      const uploadPane = document.getElementById('bulkUploadPane');
+      const rawPane = document.getElementById('bulkRawPane');
+      const tabUpload = document.getElementById('tabUploadBtn');
+      const tabRaw = document.getElementById('tabRawBtn');
+      if (tab === 'raw') {{
+        uploadPane.style.display = 'none';
+        rawPane.style.display = 'block';
+        tabRaw.classList.add('active');
+        tabUpload.classList.remove('active');
+      }} else {{
+        uploadPane.style.display = 'block';
+        rawPane.style.display = 'none';
+        tabUpload.classList.add('active');
+        tabRaw.classList.remove('active');
+      }}
+    }}
+
+    function submitBulkUpload() {{
+      const input = document.getElementById('bulkUploadInput');
+      const val = input.value.trim();
+      if (!val) {{
+        alert('Silakan masukkan daftar proxy yang ingin ditambahkan.');
+        return;
+      }}
+      document.getElementById('formMode').value = 'append';
+      document.getElementById('formProxies').value = val;
+      document.getElementById('proxyForm').submit();
+    }}
+
+    function submitRawEditor() {{
+      if (!confirm('Peringatan: Ini akan mengganti seluruh daftar proxy dengan isi editor. Lanjutkan?')) return;
+      document.getElementById('formMode').value = 'replace';
+      document.getElementById('formProxies').value = document.getElementById('rawEditorTextarea').value;
+      document.getElementById('proxyForm').submit();
+    }}
+
     function deleteSelectedProxies() {{
       const count = selectedAddrs.size;
       if (count === 0) return;
       if (!confirm('Hapus ' + count + ' proxy yang dipilih dari daftar?')) return;
-      const textarea = document.getElementById('rawProxies');
+      const textarea = document.getElementById('rawEditorTextarea');
       const lines = textarea.value.split('\n');
       const toDelete = new Set(selectedAddrs);
       const remaining = [];
@@ -1240,7 +1358,8 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
           remaining.push(line);
         }}
       }}
-      textarea.value = remaining.join('\n');
+      document.getElementById('formMode').value = 'replace';
+      document.getElementById('formProxies').value = remaining.join('\n');
       document.getElementById('proxyForm').submit();
     }}
 
@@ -1262,7 +1381,7 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
 
     function deleteProxyByAddress(addr) {{
       if (!confirm('Hapus proxy ' + addr + ' dari daftar?')) return;
-      const textarea = document.getElementById('rawProxies');
+      const textarea = document.getElementById('rawEditorTextarea');
       const lines = textarea.value.split('\n');
       let removed = false;
       const filtered = [];
@@ -1274,7 +1393,8 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
         }}
         filtered.push(line);
       }}
-      textarea.value = filtered.join('\n');
+      document.getElementById('formMode').value = 'replace';
+      document.getElementById('formProxies').value = filtered.join('\n');
       document.getElementById('proxyForm').submit();
     }}
 
@@ -1285,8 +1405,8 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
         alert('Silakan masukkan format proxy, contoh: ip:port:user:pass');
         return;
       }}
-      const textarea = document.getElementById('rawProxies');
-      textarea.value = (textarea.value.trim() ? textarea.value.trim() + '\n' : '') + val;
+      document.getElementById('formMode').value = 'append';
+      document.getElementById('formProxies').value = val;
       document.getElementById('proxyForm').submit();
     }}
 
@@ -1295,10 +1415,10 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
       const btn = document.getElementById('toggleBulkBtn');
       if (section.style.display === 'none' || section.style.display === '') {{
         section.style.display = 'block';
-        btn.innerText = '✕ Tutup Bulk Editor';
+        btn.innerText = '✕ Tutup Bulk Panel';
       }} else {{
         section.style.display = 'none';
-        btn.innerText = '📝 Bulk Editor';
+        btn.innerText = '📥 Bulk Upload / Editor';
       }}
     }}
 
