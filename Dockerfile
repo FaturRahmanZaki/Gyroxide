@@ -30,6 +30,6 @@ RUN mkdir -p /app/logs
 
 VOLUME ["/app/logs", "/app/proxies.txt", "/app/.env"]
 
-EXPOSE 8080 9090
+EXPOSE 8080 49152
 
 CMD ["/app/gyroxide"]
