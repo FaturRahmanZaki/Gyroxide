@@ -28,7 +28,7 @@ COPY --from=builder /app/target/release/gyroxide /app/gyroxide
 
 RUN mkdir -p /app/logs
 
-VOLUME ["/app/logs", "/app/proxies.txt", "/app/.env"]
+VOLUME ["/app/logs"]
 
 EXPOSE 8080 49152
 

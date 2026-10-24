@@ -145,6 +145,29 @@ impl ProxyManager {
     }
 
     pub async fn get_raw_proxy_text(&self) -> String {
+        let p = std::path::Path::new(&self.config.proxy_file);
+        if p.is_dir() {
+            let direct_file = p.join("proxies.txt");
+            if direct_file.is_file() {
+                return fs::read_to_string(direct_file).await.unwrap_or_default();
+            }
+            let mut out = String::new();
+            if let Ok(mut entries) = fs::read_dir(p).await {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    let entry_path = entry.path();
+                    if entry_path.is_file() {
+                        if let Ok(content) = fs::read_to_string(&entry_path).await {
+                            if !out.is_empty() {
+                                out.push('\n');
+                            }
+                            out.push_str(&content);
+                        }
+                    }
+                }
+            }
+            return out;
+        }
+
         fs::read_to_string(&self.config.proxy_file)
             .await
             .unwrap_or_default()
@@ -156,7 +179,16 @@ impl ProxyManager {
             .filter_map(ProxyEntry::parse)
             .collect();
 
-        fs::write(&self.config.proxy_file, text).await?;
+        let p = std::path::Path::new(&self.config.proxy_file);
+        let target_file = if p.is_dir() {
+            p.join("proxies.txt")
+        } else {
+            p.to_path_buf()
+        };
+
+        if let Err(e) = fs::write(&target_file, text).await {
+            warn!("Failed to write proxies to '{}': {}", target_file.display(), e);
+        }
 
         let count = parsed.len();
         {
@@ -218,26 +250,41 @@ async fn test_proxy_tcp(proxy: &ProxyEntry, timeout: Duration) -> bool {
 }
 
 async fn load_proxies(path: &str) -> Result<Vec<ProxyEntry>> {
+    let p = std::path::Path::new(path);
+    if p.is_dir() {
+        let mut proxies = Vec::new();
+        if let Ok(mut entries) = fs::read_dir(p).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let entry_path = entry.path();
+                if entry_path.is_file() {
+                    if let Ok(content) = fs::read_to_string(&entry_path).await {
+                        for line in content.lines() {
+                            if let Some(entry) = ProxyEntry::parse(line) {
+                                proxies.push(entry);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if proxies.is_empty() {
+            warn!("Proxy directory '{}' contains no proxies or is empty", path);
+        }
+        return Ok(proxies);
+    }
+
     let content = match fs::read_to_string(path).await {
         Ok(c) => c,
         Err(_) => {
             let example = concat!(
-                "# Gyroxide - Proxy List\n",
-                "# One proxy per line. Supported formats:\n",
-                "#\n",
-                "#   http://host:port\n",
-                "#   http://user:pass@host:port\n",
-                "#   https://host:port\n",
-                "#   socks5://host:port\n",
-                "#   socks5://user:pass@host:port\n",
-                "#   host:port  (defaults to http)\n",
-                "#\n",
-                "# Example:\n",
-                "# http://1.2.3.4:8080\n",
-                "# socks5://user:password@5.6.7.8:1080\n",
+                "http://1.2.3.4:8080\n",
+                "socks5://user:password@5.6.7.8:1080\n",
             );
-            fs::write(path, example).await?;
-            info!("Created example proxies file at '{}'", path);
+            if let Err(e) = fs::write(path, example).await {
+                warn!("Could not create example proxies file at '{}': {}", path, e);
+            } else {
+                info!("Created example proxies file at '{}'", path);
+            }
             return Ok(vec![]);
         }
     };
