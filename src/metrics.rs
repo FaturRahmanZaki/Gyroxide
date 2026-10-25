@@ -904,7 +904,7 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
   <div class="container">
     <header>
       <h1>Gyroxide 🌀 <span class="badge">Auto Rotate Proxy</span></h1>
-      <a href="http://43.173.19.116:3000/d/adzs2kz/gyroxide-proxy-monitor?from=now-15m&to=now&timezone=browser&refresh=10s" target="_blank" class="metrics-link">Go to Monitoring ↗</a>
+      <a href="http://43.173.19.116:3000/d/adzs2kz/gyroxide-proxy-monitor?from=now-15m&to=now&timezone=browser&refresh=30m" target="_blank" class="metrics-link">Go to Monitoring ↗</a>
     </header>
 
     {alert_box}
@@ -1037,6 +1037,10 @@ fn render_dashboard_html(entries: &[ProxyEntry], proxies_txt: &str, alert: Optio
   <div id="toastNotification" class="toast-msg"></div>
 
   <script>
+    if (window.history.replaceState) {{
+      window.history.replaceState(null, null, window.location.href);
+    }}
+
     let currentPage = 1;
     let pageSize = 10;
     const selectedAddrs = new Set();
