@@ -81,7 +81,7 @@ Configuration parameters:
 PORT=8080
 
 # Metrics exporter & Web Dashboard port
-METRICS_PORT=9090
+METRICS_PORT=49152
 
 # Upstream proxy file path
 PROXY_FILE=proxies.txt
@@ -95,7 +95,7 @@ AUTH_USERNAME=admin
 AUTH_PASSWORD=your_secure_password
 
 # Request timeout in seconds
-REQUEST_TIMEOUT_SECS=15
+REQUEST_TIMEOUT_SECS=3
 
 # Background health-check interval in seconds
 HEALTH_CHECK_INTERVAL_SECS=60
@@ -113,19 +113,25 @@ BLOCK_PRIVATE_IPS=true
 
 Gyroxide includes a modern web dashboard for managing proxies without SSH terminal access.
 
-1. Open your browser: `http://localhost:9090/admin` (or `http://YOUR_VPS_IP:9090/admin`)
-2. Enter the **Username** and **Password** configured in your `.env`.
-3. Dashboard Highlights:
-   - **Real-time Stats**: View total, active (alive), and dead proxies.
-   - **Bulk Editor (Textarea)**: Paste or remove bulk proxies at any time.
-   - **Instant Save & Reload**: Updates the proxy list in-memory immediately without restarting the server!
+- **URL (Docker Compose)**: `http://localhost:49153/admin` (or `http://YOUR_VPS_IP:49153/admin`)
+- **URL (Native / Binary)**: `http://localhost:49152/admin`
+- Enter the **Username** and **Password** configured in your `.env`.
+
+Dashboard Highlights:
+- **Real-time Stats**: View total, active (alive), and dead proxies.
+- **Search, Filter & Pagination**: Filter by protocol, status, or search query with configurable page sizes.
+- **Quick Add & Bulk Upload**: Add proxies individually or paste bulk proxy lists with automatic deduplication.
+- **Raw Editor**: View and update the underlying `proxies.txt` file directly.
+- **Batch Actions**: Select multiple proxies to copy, export to `.txt`, or batch delete.
+- **Instant Save & Reload**: Updates the proxy list in-memory immediately without restarting the server!
 
 ---
 
 ## 📈 Monitoring (Prometheus & Grafana)
 
 Prometheus metrics endpoint is available at:
-`http://localhost:9090/metrics`
+- **Docker Compose**: `http://localhost:49153/metrics`
+- **Native / Binary**: `http://localhost:49152/metrics`
 
 ### 1. Prometheus Scrape Configuration (`prometheus.yml`):
 ```yaml
@@ -133,7 +139,7 @@ scrape_configs:
   - job_name: 'gyroxide'
     scrape_interval: 5s
     static_configs:
-      - targets: ['localhost:9090'] # or YOUR_VPS_IP:9090
+      - targets: ['localhost:49153'] # or localhost:49152 if run natively
 ```
 
 ### 2. Available Metrics & PromQL Examples:
@@ -157,7 +163,7 @@ When deploying Gyroxide to a public VPS:
 1. **Always Set Credentials**:
    Always set strong `AUTH_USERNAME` and `AUTH_PASSWORD` values in `.env`. Unauthenticated proxy requests are rejected with `407 Proxy Authentication Required`, and dashboard requests require `401 Unauthorized` Basic Auth.
 2. **Change Default Ports**:
-   Change default ports (`PORT=8080`, `METRICS_PORT=9090`) to random high ports in `.env` and `docker-compose.yml` to minimize exposure to public port scanners.
+   Change default ports (`PORT=8080`, `METRICS_PORT=49152`, host port `49153`) in `.env` and `docker-compose.yml` to minimize exposure to public port scanners.
 3. **Anti-SSRF Protection**:
    Keep `BLOCK_PRIVATE_IPS=true` enabled to prevent attackers from using the proxy to scan internal server services (`127.0.0.1`, `localhost`, cloud metadata `169.254.169.254`).
 
