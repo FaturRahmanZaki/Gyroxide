@@ -10,7 +10,7 @@ services:
       - "8080:8080"
       - "127.0.0.1:49153:49152"
     volumes:
-      - ./proxies.txt:/app/proxies.txt:ro
+      - ./proxies.txt:/app/proxies.txt
       - ./.env:/app/.env:ro
       - ./logs:/app/logs
     env_file:

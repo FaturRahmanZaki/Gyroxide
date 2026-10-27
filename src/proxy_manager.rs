@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 use tokio::{fs, sync::RwLock};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use url::Url;
 
 use crate::config::Config;
@@ -202,7 +202,11 @@ impl ProxyManager {
         };
 
         if let Err(e) = fs::write(&target_file, text).await {
-            warn!("Failed to write proxies to '{}': {}", target_file.display(), e);
+            error!(
+                "Failed to write proxies to '{}' ({}). Proxy list lives in memory only and will be lost on restart.",
+                target_file.display(),
+                e
+            );
         }
 
         let count = parsed.len();
@@ -250,7 +254,11 @@ impl ProxyManager {
         if added_count > 0 {
             existing_text.push_str(&to_append);
             if let Err(e) = fs::write(&target_file, &existing_text).await {
-                warn!("Failed to write proxies to '{}': {}", target_file.display(), e);
+                error!(
+                    "Failed to write proxies to '{}' ({}). Appended proxies live in memory only and will be lost on restart.",
+                    target_file.display(),
+                    e
+                );
             }
         }
 
