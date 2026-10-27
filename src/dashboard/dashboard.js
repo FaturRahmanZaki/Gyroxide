@@ -31,6 +31,8 @@
       'monitoring.invalidUrl': 'Format URL tidak valid (harus diawali http:// atau https://)',
       'monitoring.urlSaved': 'Tautan Grafana berhasil disimpan',
       'monitoring.urlCleared': 'Tautan Grafana dihapus',
+      'monitoring.resetDefault': 'Reset default',
+      'monitoring.urlReset': 'Tautan Grafana direset ke default .env',
       'nav.logout': 'Keluar',
       'lang.label': 'Bahasa',
       'theme.toggle': 'Ganti tema',
@@ -156,6 +158,8 @@
       'monitoring.invalidUrl': 'Invalid URL format (must start with http:// or https://)',
       'monitoring.urlSaved': 'Grafana link saved',
       'monitoring.urlCleared': 'Grafana link cleared',
+      'monitoring.resetDefault': 'Reset to default',
+      'monitoring.urlReset': 'Grafana link reset to .env default',
       'nav.logout': 'Log out',
       'lang.label': 'Language',
       'theme.toggle': 'Toggle theme',
@@ -766,7 +770,7 @@
   function getSavedGrafanaUrl() {
     try {
       var local = localStorage.getItem(STORAGE_GRAFANA_URL);
-      if (local) return local;
+      if (local !== null) return local;
     } catch (e) {}
     return getServerGrafanaUrl();
   }
@@ -797,16 +801,24 @@
     var url = getSavedGrafanaUrl();
     var input = $('grafanaUrlInput');
     var clearBtn = $('clearMonitoringBtn');
+    var resetBtn = $('resetMonitoringBtn');
     if (input) input.value = url;
-    var hasLocal = false;
+    var localVal = null;
     try {
-      hasLocal = !!localStorage.getItem(STORAGE_GRAFANA_URL);
+      localVal = localStorage.getItem(STORAGE_GRAFANA_URL);
     } catch (e) {}
     if (clearBtn) {
-      if (hasLocal || (url && !getServerGrafanaUrl())) {
+      if (url) {
         clearBtn.removeAttribute('hidden');
       } else {
         clearBtn.setAttribute('hidden', '');
+      }
+    }
+    if (resetBtn) {
+      if (localVal !== null && getServerGrafanaUrl()) {
+        resetBtn.removeAttribute('hidden');
+      } else {
+        resetBtn.setAttribute('hidden', '');
       }
     }
     if (typeof dlg.showModal === 'function') {
@@ -843,14 +855,25 @@
 
   function clearMonitoringUrl() {
     try {
-      localStorage.removeItem(STORAGE_GRAFANA_URL);
+      localStorage.setItem(STORAGE_GRAFANA_URL, '');
     } catch (e) {}
     var input = $('grafanaUrlInput');
-    var fallback = getServerGrafanaUrl();
-    if (input) input.value = fallback;
+    if (input) input.value = '';
     updateMonitoringUI();
     closeMonitoringModal();
     showToast(t('monitoring.urlCleared'));
+  }
+
+  function resetMonitoringUrl() {
+    try {
+      localStorage.removeItem(STORAGE_GRAFANA_URL);
+    } catch (e) {}
+    var fallback = getServerGrafanaUrl();
+    var input = $('grafanaUrlInput');
+    if (input) input.value = fallback;
+    updateMonitoringUI();
+    closeMonitoringModal();
+    showToast(t('monitoring.urlReset'));
   }
 
   function toggleMonitoringHelp() {
@@ -922,6 +945,7 @@
   window.closeMonitoringModal = closeMonitoringModal;
   window.saveMonitoringUrl = saveMonitoringUrl;
   window.clearMonitoringUrl = clearMonitoringUrl;
+  window.resetMonitoringUrl = resetMonitoringUrl;
   window.toggleMonitoringHelp = toggleMonitoringHelp;
 
   Object.defineProperty(window, 'currentPage', {
