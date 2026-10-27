@@ -32,6 +32,8 @@ Gyroxide/
 │   └── logger.rs         # Tracing subscriber & daily rolling file logger
 ├── Dockerfile            # Multi-stage production Dockerfile
 ├── docker-compose.yml    # Docker service definitions
+├── grafana/
+│   └── gyroxide-dashboard.json # Ready-to-import Grafana dashboard template
 ├── proxies.txt           # Upstream proxy list
 ├── .env                  # Environment configuration
 ├── .env.example          # Environment template
@@ -153,6 +155,31 @@ scrape_configs:
 | **Status Codes** | `sum by (status) (rate(gyroxide_requests_total[5m]))` | Pie / Bar Chart |
 | **Average Latency** | `rate(gyroxide_request_duration_seconds_sum[1m]) / rate(gyroxide_request_duration_seconds_count[1m])` | Time-series (seconds) |
 | **Top Failed Proxies** | `topk(5, gyroxide_proxy_failures_total)` | Bar Gauge / Table |
+
+### 3. Grafana Dashboard Template:
+
+A ready-made dashboard template is bundled in the repo at **`grafana/gyroxide-dashboard.json`**. It includes 16 panels: proxy alive/dead/total stats, alive-ratio gauge, uptime, request rate, per-proxy status timeline & table (with a `$proxy` filter variable), latency percentiles (p50/p95/p99), and process CPU / memory / FDs / threads.
+
+**Option A — Manual import (easiest):**
+1. Open Grafana → **Dashboards → Import**.
+2. Upload `grafana/gyroxide-dashboard.json` (or paste its contents).
+3. Select your Prometheus datasource when prompted.
+
+**Option B — Automatic provisioning:**
+Mount the folder into your Grafana container and let it load the dashboard on startup:
+
+```yaml
+# grafana-compose.yml (or merged into your existing Grafana service)
+services:
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/gyroxide-dashboard.json:/etc/grafana/provisioning/dashboards/gyroxide-dashboard.json:ro
+```
+
+> **Note**: This template uses the Grafana dashboard schema v2 (`dashboard.grafana.app/v2`), which requires **Grafana 12+**. On older Grafana versions, import the dashboard and re-export it in the legacy schema.
 
 ---
 
