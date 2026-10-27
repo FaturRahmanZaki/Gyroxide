@@ -7,6 +7,7 @@ use tokio::net::TcpListener;
 use tracing::info;
 
 mod config;
+mod dashboard;
 mod handler;
 mod logger;
 mod metrics;

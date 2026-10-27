@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Gyroxide — Proxy Console</title>
+  <script>
+    /* Applied before the stylesheet paints, so the saved theme never flashes. */
+    (function () {
+      var root = document.documentElement;
+      try {
+        var theme = localStorage.getItem('gyroxide.theme');
+        if (theme !== 'light' && theme !== 'dark') {
+          theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+            ? 'dark'
+            : 'light';
+        }
+        root.setAttribute('data-theme', theme);
+      } catch (e) {
+        root.setAttribute('data-theme', 'light');
+      }
+      try {
+        var lang = localStorage.getItem('gyroxide.lang');
+        if (lang === 'id' || lang === 'en') root.lang = lang;
+      } catch (e) {}
+    })();
+  </script>
+  <style>
+{{CSS}}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">G</span>
+        <div>
+          <h1>Gyroxide</h1>
+          <p data-i18n="brand.subtitle">Proxy console</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <a class="topbar-link" href="http://43.173.19.116:3000/d/adzs2kz/gyroxide-proxy-monitor?from=now-15m&to=now&timezone=browser&refresh=30m" target="_blank" rel="noopener">
+          <span data-i18n="nav.monitoring">Monitoring</span>
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6.5 3.5h6v6M12.5 3.5 5 11"/><path d="M11 9.5v3H3.5v-7H6"/></svg>
+        </a>
+        <div class="seg" role="group" data-i18n-aria-label="lang.label" aria-label="Bahasa">
+          <button type="button" id="langIdBtn" class="seg-btn" aria-pressed="true" onclick="setLanguage('id')">ID</button>
+          <button type="button" id="langEnBtn" class="seg-btn" aria-pressed="false" onclick="setLanguage('en')">EN</button>
+        </div>
+        <button type="button" id="themeToggle" class="theme-toggle" aria-pressed="false" aria-label="Ganti tema" title="Ganti tema" onclick="toggleTheme()">
+          <svg class="icon-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1Z"/></svg>
+          <svg class="icon-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.6 3.6l1 1M11.4 11.4l1 1M12.4 3.6l-1 1M4.6 11.4l-1 1"/></svg>
+        </button>
+      </div>
+    </header>
+
+    {{ALERT}}
+
+    <section class="stats" aria-label="Ringkasan proxy">
+      <div class="stat">
+        <span class="stat-label" data-i18n="stats.total">Total</span>
+        <span class="stat-value">{{TOTAL}}</span>
+        <span class="stat-note" data-i18n="stats.totalNote">proxy terdaftar</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label" data-i18n="stats.alive">Alive</span>
+        <span class="stat-value good">{{ALIVE}}</span>
+        <span class="stat-note" data-i18n="stats.aliveNote">siap dipakai</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label" data-i18n="stats.dead">Dead</span>
+        <span class="stat-value bad">{{DEAD}}</span>
+        <span class="stat-note" data-i18n="stats.deadNote">perlu pemeriksaan</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label" data-i18n="stats.availability">Ketersediaan</span>
+        <span class="stat-value">{{AVAILABILITY}}</span>
+        <span class="stat-note" data-i18n="stats.availabilityNote">dari total proxy</span>
+      </div>
+    </section>
+
+    <main class="panel">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title" data-i18n="panel.title">Daftar proxy</h2>
+          <p class="panel-desc" data-i18n="panel.desc">Endpoint upstream yang dipakai untuk rotasi permintaan.</p>
+        </div>
+        <button type="button" id="toggleBulkBtn" class="btn btn-secondary" aria-expanded="false" aria-controls="bulkSection" onclick="toggleBulkEditor()">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 10.5V2.5M5 5.5l3-3 3 3"/><path d="M2.5 10v3.5h11V10"/></svg>
+          <span id="toggleBulkLabel">Unggah massal</span>
+        </button>
+      </div>
+
+      <div class="toolbar">
+        <label class="search">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.25"/><path d="m10.25 10.25 3 3"/></svg>
+          <input type="search" id="searchInput" placeholder="Cari alamat, port, atau status…" data-i18n-placeholder="search.placeholder" aria-label="Cari proxy" data-i18n-aria-label="search.label" autocomplete="off" oninput="render(1)">
+        </label>
+        <select id="protoFilter" class="control" aria-label="Filter protokol" data-i18n-aria-label="filter.protocol" onchange="render(1)">
+          <option value="all" data-i18n="filter.protocolAll">Semua protokol</option>
+          <option value="http">HTTP</option>
+          <option value="socks5">SOCKS5</option>
+        </select>
+        <select id="statusFilter" class="control" aria-label="Filter status" data-i18n-aria-label="filter.status" onchange="render(1)">
+          <option value="all" data-i18n="filter.statusAll">Semua status</option>
+          <option value="alive">Alive</option>
+          <option value="dead">Dead</option>
+        </select>
+        <div class="quick-add">
+          <input type="text" id="quickInput" placeholder="ip:port:user:pass" aria-label="Tambah proxy cepat" data-i18n-aria-label="quick.label" autocomplete="off" onkeydown="if(event.key==='Enter')quickAddProxy()">
+          <button type="button" class="btn btn-primary" data-i18n="quick.button" onclick="quickAddProxy()">Tambah</button>
+        </div>
+      </div>
+
+      <div id="selectionBar" class="selection-bar" hidden>
+        <span><strong id="selectedCountText">0</strong> <span data-i18n="selection.countLabel">proxy dipilih</span></span>
+        <div class="selection-actions">
+          <button type="button" class="btn btn-ghost" data-i18n="selection.selectAll" onclick="selectAllFiltered()">Pilih semua hasil</button>
+          <button type="button" class="btn btn-ghost" data-i18n="selection.copy" onclick="copySelectedProxies()">Salin</button>
+          <button type="button" class="btn btn-ghost" data-i18n="selection.export" onclick="exportSelectedProxies()">Ekspor .txt</button>
+          <button type="button" class="btn btn-danger-ghost" data-i18n="selection.delete" onclick="deleteSelectedProxies()">Hapus</button>
+          <button type="button" class="btn btn-ghost" data-i18n="selection.clear" onclick="clearAllSelection()">Batal</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table id="proxyTable">
+          <thead>
+            <tr>
+              <th class="col-check"><input type="checkbox" id="selectAllCheckbox" aria-label="Pilih semua di halaman ini" data-i18n-aria-label="selectAll.label" onchange="toggleSelectAll(this)"></th>
+              <th class="col-num" data-i18n="th.no">No.</th>
+              <th data-i18n="th.address">Alamat</th>
+              <th data-i18n="th.protocol">Protokol</th>
+              <th data-i18n="th.auth">Autentikasi</th>
+              <th data-i18n="th.status">Status</th>
+              <th data-i18n="th.fails">Gagal</th>
+              <th class="col-act" data-i18n="th.actions">Aksi</th>
+            </tr>
+          </thead>
+          <tbody id="proxyTableBody">
+{{ROWS}}
+            <tr id="emptyRow" hidden>
+              <td colspan="8" class="empty-cell">
+                <div class="empty">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M3.5 10h17M8 14h3"/></svg>
+                  <div class="empty-title" id="emptyTitle" data-i18n="empty.none.title">Belum ada proxy</div>
+                  <div class="empty-desc" id="emptyDesc" data-i18n="empty.none.desc">Tambahkan proxy lewat kolom di atas atau unggah massal.</div>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-footer">
+        <p id="paginationInfo" class="pagination-info" aria-live="polite">Menampilkan 0 dari 0 proxy</p>
+        <nav class="pagination" aria-label="Navigasi halaman" data-i18n-aria-label="pagination.nav">
+          <button type="button" id="prevPageBtn" class="page-btn" onclick="render(currentPage - 1)" aria-label="Halaman sebelumnya" data-i18n-aria-label="pagination.prev">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m10 3.5-4.5 4.5L10 12.5"/></svg>
+          </button>
+          <div id="paginationPages" class="pagination-pages"></div>
+          <button type="button" id="nextPageBtn" class="page-btn" onclick="render(currentPage + 1)" aria-label="Halaman berikutnya" data-i18n-aria-label="pagination.next">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg>
+          </button>
+        </nav>
+      </div>
+
+      <section id="bulkSection" class="bulk-section" hidden>
+        <div class="tabs" role="tablist">
+          <button type="button" id="tabUploadBtn" class="tab active" role="tab" aria-selected="true" aria-controls="bulkUploadPane" data-i18n="tabs.bulk" onclick="switchBulkTab('upload')">Unggah massal</button>
+          <button type="button" id="tabRawBtn" class="tab" role="tab" aria-selected="false" aria-controls="bulkRawPane" data-i18n="tabs.raw" onclick="switchBulkTab('raw')">Editor mentah</button>
+        </div>
+
+        <div id="bulkUploadPane" class="tab-pane" role="tabpanel" aria-labelledby="tabUploadBtn">
+          <p class="hint" data-i18n-html="bulk.hint">Satu proxy per baris. Format yang didukung: <code>ip:port</code>, <code>ip:port:user:pass</code>, <code>http://…</code>, dan <code>socks5://…</code>. Duplikat otomatis dilewati.</p>
+          <textarea id="bulkUploadInput" spellcheck="false" placeholder="192.168.1.1:8080:user:pass&#10;socks5://user:pass@192.168.1.2:1080"></textarea>
+          <div class="pane-actions">
+            <span class="pane-note" data-i18n="bulk.note">Proxy baru ditambahkan tanpa menghapus daftar lama.</span>
+            <button type="button" class="btn btn-primary" data-i18n="bulk.submit" onclick="submitBulkUpload()">Tambahkan proxy</button>
+          </div>
+        </div>
+
+        <div id="bulkRawPane" class="tab-pane" role="tabpanel" aria-labelledby="tabRawBtn" hidden>
+          <div class="callout">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2.5 14 13H2L8 2.5Z"/><path d="M8 6.5v3M8 11.5v.01"/></svg>
+            <span data-i18n-html="raw.callout">Menyimpan dari editor ini akan menimpa seluruh isi <code>proxies.txt</code>.</span>
+          </div>
+          <textarea id="rawEditorTextarea" spellcheck="false" aria-label="Isi file proxies.txt" data-i18n-aria-label="raw.label">{{PROXY_TEXT}}</textarea>
+          <div class="pane-actions">
+            <span class="pane-note" data-i18n="raw.note">Gunakan hanya jika Anda perlu mengganti daftar secara keseluruhan.</span>
+            <button type="button" class="btn btn-danger" data-i18n="raw.submit" onclick="submitRawEditor()">Simpan dan timpa</button>
+          </div>
+        </div>
+
+        <form id="proxyForm" method="POST" action="/admin" hidden>
+          <input type="hidden" id="formMode" name="mode" value="append">
+          <textarea id="formProxies" name="proxies" hidden></textarea>
+        </form>
+      </section>
+    </main>
+
+    <footer class="page-footer">
+      <span data-i18n="footer.product">Gyroxide · Auto-rotate proxy gateway</span>
+      <span><span data-i18n="footer.metrics">Prometheus metrics tersedia di</span> <code>/metrics</code></span>
+    </footer>
+  </div>
+
+  <dialog id="confirmDialog">
+    <form method="dialog" class="dialog-body">
+      <h2 class="dialog-title" id="confirmTitle" data-i18n="dialog.title">Konfirmasi</h2>
+      <p class="dialog-message" id="confirmMessage" data-i18n="dialog.message">Lanjutkan tindakan ini?</p>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel" class="btn btn-secondary" data-i18n="dialog.cancel">Batal</button>
+        <button type="submit" value="confirm" id="confirmOkBtn" class="btn btn-danger" data-i18n="dialog.confirmDefault">Lanjutkan</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toastNotification" class="toast" role="status" aria-live="polite"></div>
+
+  <script>
+{{JS}}
+  </script>
+</body>
+</html>
