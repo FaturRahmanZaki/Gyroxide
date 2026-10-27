@@ -4,11 +4,34 @@
   var PAGE_SIZE = 10;
   var STORAGE_THEME = 'gyroxide.theme';
   var STORAGE_LANG = 'gyroxide.lang';
+  var STORAGE_GRAFANA_URL = 'gyroxide.grafana_url';
 
   var MESSAGES = {
     id: {
       'brand.subtitle': 'Proxy console',
       'nav.monitoring': 'Monitoring',
+      'monitoring.dialogTitle': 'Konfigurasi Monitoring Grafana',
+      'monitoring.dialogDesc': 'Masukkan tautan dashboard Grafana Anda untuk memantau metrik Gyroxide secara langsung.',
+      'monitoring.inputLabel': 'URL Dashboard Grafana',
+      'monitoring.inputHelp': 'Tautan disimpan di browser Anda.',
+      'monitoring.saveAndOpen': 'Simpan & Buka',
+      'monitoring.editTitle': 'Ubah link Grafana',
+      'monitoring.clear': 'Hapus link',
+      'monitoring.helpTitle': 'Panduan Setup Grafana (README.md)',
+      'monitoring.step1Title': 'Endpoint Prometheus',
+      'monitoring.step1Desc': 'Metrik Prometheus Gyroxide tersedia di:',
+      'monitoring.step2Title': 'Konfigurasi Scrape Prometheus',
+      'monitoring.step2Desc': 'Tambahkan konfigurasi berikut ke file prometheus.yml:',
+      'monitoring.step3Title': 'Import Dashboard ke Grafana',
+      'monitoring.step3Desc': 'Gunakan template dashboard bawaan di repositori:',
+      'monitoring.step3a': 'File template dashboard: grafana/gyroxide-dashboard.json',
+      'monitoring.step3b': 'Buka Grafana, masuk ke menu Dashboards > Import',
+      'monitoring.step3c': 'Unggah file JSON tersebut dan pilih datasource Prometheus Anda',
+      'monitoring.step3d': 'Setelah dashboard terbuka, salin URL browser Anda dan tempelkan ke kolom di atas',
+      'monitoring.invalidUrl': 'Format URL tidak valid (harus diawali http:// atau https://)',
+      'monitoring.urlSaved': 'Tautan Grafana berhasil disimpan',
+      'monitoring.urlCleared': 'Tautan Grafana dihapus',
+      'nav.logout': 'Keluar',
       'lang.label': 'Bahasa',
       'theme.toggle': 'Ganti tema',
 
@@ -112,6 +135,28 @@
     en: {
       'brand.subtitle': 'Proxy console',
       'nav.monitoring': 'Monitoring',
+      'monitoring.dialogTitle': 'Configure Grafana Monitoring',
+      'monitoring.dialogDesc': 'Enter your Grafana dashboard URL to view live Gyroxide metrics.',
+      'monitoring.inputLabel': 'Grafana Dashboard URL',
+      'monitoring.inputHelp': 'Saved locally in your browser.',
+      'monitoring.saveAndOpen': 'Save & Open',
+      'monitoring.editTitle': 'Edit Grafana link',
+      'monitoring.clear': 'Clear link',
+      'monitoring.helpTitle': 'Grafana Setup Guide (README.md)',
+      'monitoring.step1Title': 'Prometheus Endpoint',
+      'monitoring.step1Desc': 'Gyroxide Prometheus metrics are available at:',
+      'monitoring.step2Title': 'Prometheus Scrape Configuration',
+      'monitoring.step2Desc': 'Add the following block to your prometheus.yml file:',
+      'monitoring.step3Title': 'Import Dashboard into Grafana',
+      'monitoring.step3Desc': 'Use the dashboard template provided in the repository:',
+      'monitoring.step3a': 'Dashboard template file: grafana/gyroxide-dashboard.json',
+      'monitoring.step3b': 'In Grafana, go to Dashboards > Import',
+      'monitoring.step3c': 'Upload the JSON file and select your Prometheus datasource',
+      'monitoring.step3d': 'Once the dashboard opens, copy the browser URL and paste it above',
+      'monitoring.invalidUrl': 'Invalid URL format (must start with http:// or https://)',
+      'monitoring.urlSaved': 'Grafana link saved',
+      'monitoring.urlCleared': 'Grafana link cleared',
+      'nav.logout': 'Log out',
       'lang.label': 'Language',
       'theme.toggle': 'Toggle theme',
 
@@ -713,6 +758,109 @@
     $('bulkRawPane').hidden = upload;
   }
 
+  function getServerGrafanaUrl() {
+    var btn = $('monitoringBtn');
+    return (btn && btn.getAttribute('data-server-grafana')) ? btn.getAttribute('data-server-grafana').trim() : '';
+  }
+
+  function getSavedGrafanaUrl() {
+    try {
+      var local = localStorage.getItem(STORAGE_GRAFANA_URL);
+      if (local) return local;
+    } catch (e) {}
+    return getServerGrafanaUrl();
+  }
+
+  function updateMonitoringUI() {
+    var editBtn = $('editMonitoringBtn');
+    if (!editBtn) return;
+    var url = getSavedGrafanaUrl();
+    if (url) {
+      editBtn.removeAttribute('hidden');
+    } else {
+      editBtn.setAttribute('hidden', '');
+    }
+  }
+
+  function handleMonitoringClick() {
+    var url = getSavedGrafanaUrl();
+    if (url) {
+      window.open(url, '_blank', 'noopener');
+    } else {
+      openMonitoringModal(true);
+    }
+  }
+
+  function openMonitoringModal(focusInput) {
+    var dlg = $('monitoringDialog');
+    if (!dlg) return;
+    var url = getSavedGrafanaUrl();
+    var input = $('grafanaUrlInput');
+    var clearBtn = $('clearMonitoringBtn');
+    if (input) input.value = url;
+    var hasLocal = false;
+    try {
+      hasLocal = !!localStorage.getItem(STORAGE_GRAFANA_URL);
+    } catch (e) {}
+    if (clearBtn) {
+      if (hasLocal || (url && !getServerGrafanaUrl())) {
+        clearBtn.removeAttribute('hidden');
+      } else {
+        clearBtn.setAttribute('hidden', '');
+      }
+    }
+    if (typeof dlg.showModal === 'function') {
+      dlg.showModal();
+      if (focusInput && input) input.focus();
+    }
+  }
+
+  function closeMonitoringModal() {
+    var dlg = $('monitoringDialog');
+    if (dlg && typeof dlg.close === 'function') {
+      dlg.close();
+    }
+  }
+
+  function saveMonitoringUrl(e) {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    var input = $('grafanaUrlInput');
+    if (!input) return;
+    var url = (input.value || '').trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) {
+      showToast(t('monitoring.invalidUrl'), true);
+      return;
+    }
+    try {
+      localStorage.setItem(STORAGE_GRAFANA_URL, url);
+    } catch (err) {}
+    updateMonitoringUI();
+    closeMonitoringModal();
+    showToast(t('monitoring.urlSaved'));
+    window.open(url, '_blank', 'noopener');
+  }
+
+  function clearMonitoringUrl() {
+    try {
+      localStorage.removeItem(STORAGE_GRAFANA_URL);
+    } catch (e) {}
+    var input = $('grafanaUrlInput');
+    var fallback = getServerGrafanaUrl();
+    if (input) input.value = fallback;
+    updateMonitoringUI();
+    closeMonitoringModal();
+    showToast(t('monitoring.urlCleared'));
+  }
+
+  function toggleMonitoringHelp() {
+    var content = $('monitoringHelpContent');
+    var btn = $('toggleMonitoringHelpBtn');
+    if (!content) return;
+    content.hidden = !content.hidden;
+    if (btn) btn.classList.toggle('expanded', !content.hidden);
+  }
+
   function setupRowClicks() {
     for (var i = 0; i < allRows.length; i++) {
       allRows[i].addEventListener('click', function (e) {
@@ -739,9 +887,16 @@
         $('searchInput').select();
       }
     });
+    var monDlg = $('monitoringDialog');
+    if (monDlg) {
+      monDlg.addEventListener('click', function (e) {
+        if (e.target === monDlg) monDlg.close();
+      });
+    }
     applyTranslations();
     applyThemeState();
     updateSelectionUI();
+    updateMonitoringUI();
     render(1);
   }
 
@@ -762,6 +917,12 @@
   window.submitRawEditor = submitRawEditor;
   window.toggleBulkEditor = toggleBulkEditor;
   window.switchBulkTab = switchBulkTab;
+  window.handleMonitoringClick = handleMonitoringClick;
+  window.openMonitoringModal = openMonitoringModal;
+  window.closeMonitoringModal = closeMonitoringModal;
+  window.saveMonitoringUrl = saveMonitoringUrl;
+  window.clearMonitoringUrl = clearMonitoringUrl;
+  window.toggleMonitoringHelp = toggleMonitoringHelp;
 
   Object.defineProperty(window, 'currentPage', {
     get: function () { return currentPage; },

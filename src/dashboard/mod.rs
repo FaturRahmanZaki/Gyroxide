@@ -10,6 +10,7 @@ use crate::proxy_manager::{ProxyEntry, ProxyType};
 const TEMPLATE: &str = include_str!("template.html");
 const STYLES: &str = include_str!("dashboard.css");
 const SCRIPT: &str = include_str!("dashboard.js");
+const LOGIN_TEMPLATE: &str = include_str!("login.html");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlertKind {
@@ -55,8 +56,12 @@ pub struct Flash<'a> {
     pub message: &'a str,
 }
 
-/// Renders the full admin page.
-pub fn render(entries: &[ProxyEntry], proxies_txt: &str, alert: Option<Flash<'_>>) -> String {
+pub fn render(
+    entries: &[ProxyEntry],
+    proxies_txt: &str,
+    alert: Option<Flash<'_>>,
+    grafana_url: Option<&str>,
+) -> String {
     let total = entries.len();
     let alive = entries.iter().filter(|p| p.is_alive).count();
     let dead = total.saturating_sub(alive);
@@ -92,8 +97,9 @@ pub fn render(entries: &[ProxyEntry], proxies_txt: &str, alert: Option<Flash<'_>
 
     // Static assets first, then the dynamic values, so proxy text can never
     // introduce another placeholder.
+    let styles = format!("<style>\n{}\n</style>", STYLES);
     TEMPLATE
-        .replace("{{CSS}}", STYLES)
+        .replace("{{CSS}}", &styles)
         .replace("{{JS}}", SCRIPT)
         .replace("{{TOTAL}}", &total.to_string())
         .replace("{{ALIVE}}", &alive.to_string())
@@ -102,6 +108,22 @@ pub fn render(entries: &[ProxyEntry], proxies_txt: &str, alert: Option<Flash<'_>
         .replace("{{PROXY_TEXT}}", &html_escape(proxies_txt))
         .replace("{{ALERT}}", &alert_box)
         .replace("{{ROWS}}", &rows)
+        .replace("{{GRAFANA_URL}}", &html_escape(grafana_url.unwrap_or("")))
+}
+
+/// Renders the login page. `show_error` fills the reserved notice slot with
+/// the "credentials rejected" message after a failed POST /admin/login.
+pub fn render_login(show_error: bool) -> String {
+    LOGIN_TEMPLATE
+        .replace("{{ERROR_CLASS}}", if show_error { " error" } else { "" })
+        .replace(
+            "{{ERROR_TEXT}}",
+            if show_error {
+                r#"Credentials rejected. Check <code>AUTH_USERNAME</code> / <code>AUTH_PASSWORD</code> in your <code>.env</code>."#
+            } else {
+                ""
+            },
+        )
 }
 
 fn build_rows(entries: &[ProxyEntry], proxies_txt: &str) -> String {

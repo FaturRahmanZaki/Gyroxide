@@ -26,9 +26,7 @@
       } catch (e) {}
     })();
   </script>
-  <style>
-{{CSS}}
-  </style>
+  {{CSS}}
 </head>
 <body>
   <div class="page">
@@ -41,10 +39,15 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <a class="topbar-link" href="http://43.173.19.116:3000/d/adzs2kz/gyroxide-proxy-monitor?from=now-15m&to=now&timezone=browser&refresh=30m" target="_blank" rel="noopener">
-          <span data-i18n="nav.monitoring">Monitoring</span>
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6.5 3.5h6v6M12.5 3.5 5 11"/><path d="M11 9.5v3H3.5v-7H6"/></svg>
-        </a>
+        <div class="topbar-monitoring-wrap">
+          <button type="button" id="monitoringBtn" class="topbar-link topbar-btn" data-server-grafana="{{GRAFANA_URL}}" onclick="handleMonitoringClick()">
+            <span data-i18n="nav.monitoring">Monitoring</span>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6.5 3.5h6v6M12.5 3.5 5 11"/><path d="M11 9.5v3H3.5v-7H6"/></svg>
+          </button>
+          <button type="button" id="editMonitoringBtn" class="topbar-link topbar-btn topbar-btn-icon" data-i18n-title="monitoring.editTitle" title="Ubah link Grafana" onclick="openMonitoringModal(true)" hidden>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M11.5 2.5a1.4 1.4 0 0 1 2 2L4.5 13.5 1.5 14.5l1-3L11.5 2.5Z"/></svg>
+          </button>
+        </div>
         <div class="seg" role="group" data-i18n-aria-label="lang.label" aria-label="Bahasa">
           <button type="button" id="langIdBtn" class="seg-btn" aria-pressed="true" onclick="setLanguage('id')">ID</button>
           <button type="button" id="langEnBtn" class="seg-btn" aria-pressed="false" onclick="setLanguage('en')">EN</button>
@@ -53,6 +56,10 @@
           <svg class="icon-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1Z"/></svg>
           <svg class="icon-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.6 3.6l1 1M11.4 11.4l1 1M12.4 3.6l-1 1M4.6 11.4l-1 1"/></svg>
         </button>
+        <a class="topbar-link" href="/admin/logout" title="Keluar" data-i18n-aria-label="nav.logout" aria-label="Keluar">
+          <span data-i18n="nav.logout">Keluar</span>
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6.5 13.5h-4v-11h4M10.5 5.5 13 8l-2.5 2.5M13 8H6"/></svg>
+        </a>
       </div>
     </header>
 
@@ -216,6 +223,83 @@
         <button type="submit" value="confirm" id="confirmOkBtn" class="btn btn-danger" data-i18n="dialog.confirmDefault">Lanjutkan</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="monitoringDialog">
+    <div class="dialog-body monitoring-dialog-body">
+      <div class="dialog-top">
+        <h2 class="dialog-title" data-i18n="monitoring.dialogTitle">Konfigurasi Monitoring Grafana</h2>
+        <button type="button" class="dialog-close-btn" aria-label="Tutup" onclick="closeMonitoringModal()">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </div>
+      <p class="dialog-message" data-i18n="monitoring.dialogDesc">Masukkan tautan dashboard Grafana Anda untuk memantau metrik Gyroxide secara langsung.</p>
+
+      <form id="monitoringForm" onsubmit="saveMonitoringUrl(event)">
+        <div class="form-group">
+          <label for="grafanaUrlInput" class="form-label" data-i18n="monitoring.inputLabel">URL Dashboard Grafana</label>
+          <input type="url" id="grafanaUrlInput" class="form-input" placeholder="http://vps-ip:3000/d/... atau https://..." required autocomplete="off" spellcheck="false">
+          <span class="form-help" data-i18n="monitoring.inputHelp">Tautan disimpan di browser Anda.</span>
+        </div>
+
+        <div class="dialog-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeMonitoringModal()" data-i18n="dialog.cancel">Batal</button>
+          <button type="button" id="clearMonitoringBtn" class="btn btn-secondary" onclick="clearMonitoringUrl()" data-i18n="monitoring.clear" hidden>Hapus link</button>
+          <button type="submit" class="btn btn-primary" data-i18n="monitoring.saveAndOpen">Simpan & Buka</button>
+        </div>
+      </form>
+
+      <div class="monitoring-help-section">
+        <button type="button" class="monitoring-help-toggle" id="toggleMonitoringHelpBtn" onclick="toggleMonitoringHelp()">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 5v.01"/></svg>
+          <span data-i18n="monitoring.helpTitle">Panduan Setup Grafana (README.md)</span>
+          <svg class="chevron-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
+        </button>
+
+        <div id="monitoringHelpContent" class="monitoring-help-content" hidden>
+          <div class="help-step">
+            <span class="help-step-badge">1</span>
+            <div class="help-step-main">
+              <strong data-i18n="monitoring.step1Title">Endpoint Prometheus</strong>
+              <p data-i18n="monitoring.step1Desc">Metrik Prometheus Gyroxide tersedia di:</p>
+              <div class="help-endpoints">
+                <code>http://localhost:49153/metrics</code> <span class="help-tag">Docker</span>
+              </div>
+              <div class="help-endpoints">
+                <code>http://localhost:49152/metrics</code> <span class="help-tag">Native</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="help-step">
+            <span class="help-step-badge">2</span>
+            <div class="help-step-main">
+              <strong data-i18n="monitoring.step2Title">Konfigurasi Scrape Prometheus</strong>
+              <p data-i18n="monitoring.step2Desc">Tambahkan konfigurasi berikut ke file prometheus.yml:</p>
+              <pre class="help-code"><code>scrape_configs:
+  - job_name: 'gyroxide'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['localhost:49153']</code></pre>
+            </div>
+          </div>
+
+          <div class="help-step">
+            <span class="help-step-badge">3</span>
+            <div class="help-step-main">
+              <strong data-i18n="monitoring.step3Title">Import Dashboard ke Grafana</strong>
+              <p data-i18n="monitoring.step3Desc">Gunakan template dashboard bawaan di repositori:</p>
+              <ul class="help-list">
+                <li data-i18n="monitoring.step3a">File template dashboard: <code>grafana/gyroxide-dashboard.json</code></li>
+                <li data-i18n="monitoring.step3b">Buka Grafana, masuk ke menu <strong>Dashboards</strong> &rarr; <strong>Import</strong>.</li>
+                <li data-i18n="monitoring.step3c">Unggah file JSON tersebut dan pilih datasource Prometheus Anda.</li>
+                <li data-i18n="monitoring.step3d">Setelah dashboard terbuka, salin URL browser Anda dan tempelkan ke kolom di atas.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </dialog>
 
   <div id="toastNotification" class="toast" role="status" aria-live="polite"></div>

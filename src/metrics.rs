@@ -7,12 +7,60 @@ use prometheus::{
     register_counter_vec, register_gauge, register_gauge_vec, register_histogram, CounterVec, Encoder,
     Gauge, GaugeVec, Histogram, TextEncoder,
 };
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 use tokio::net::TcpListener;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::dashboard::{self, AlertKind, Flash};
 use crate::proxy_manager::{ProxyEntry, ProxyManager, ProxyType};
+
+const SESSION_COOKIE: &str = "gyroxide_session";
+const SESSION_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// In-memory dashboard sessions. Logout works because the dashboard honors a
+/// session cookie instead of raw Basic Auth — the browser would otherwise
+/// silently resend its cached credentials forever.
+struct SessionStore {
+    sessions: Mutex<HashMap<String, Instant>>,
+}
+
+impl SessionStore {
+    fn new() -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn issue(&self) -> String {
+        use rand::RngCore;
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        let token: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+
+        let mut sessions = self.sessions.lock().unwrap();
+        let now = Instant::now();
+        sessions.retain(|_, issued| now.duration_since(*issued) < SESSION_TTL);
+        sessions.insert(token.clone(), now);
+        token
+    }
+
+    fn validate(&self, token: &str) -> bool {
+        let sessions = self.sessions.lock().unwrap();
+        sessions
+            .get(token)
+            .map(|issued| Instant::now().duration_since(*issued) < SESSION_TTL)
+            .unwrap_or(false)
+    }
+
+    fn revoke(&self, token: &str) {
+        self.sessions.lock().unwrap().remove(token);
+    }
+}
 
 pub struct Metrics {
     pub requests_total: CounterVec,
@@ -102,6 +150,7 @@ pub async fn start_metrics_server(
 ) -> Result<()> {
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
     let listener = TcpListener::bind(addr).await?;
+    let sessions = Arc::new(SessionStore::new());
     info!("Gyroxide Web Dashboard & Metrics running on http://{}/admin", addr);
 
     loop {
@@ -109,13 +158,15 @@ pub async fn start_metrics_server(
         let io = TokioIo::new(stream);
         let pm = proxy_manager.clone();
         let m = metrics.clone();
+        let sessions = sessions.clone();
 
         tokio::spawn(async move {
             let service = service_fn(move |req: Request<Incoming>| {
                 let pm = pm.clone();
                 let m = m.clone();
+                let sessions = sessions.clone();
                 async move {
-                    handle_web_request(req, pm, m).await
+                    handle_web_request(req, pm, m, sessions).await
                 }
             });
 
@@ -133,9 +184,13 @@ async fn handle_web_request(
     req: Request<Incoming>,
     pm: Arc<ProxyManager>,
     m: Arc<Metrics>,
+    sessions: Arc<SessionStore>,
 ) -> Result<Response<Full<Bytes>>, hyper::Error> {
-    let path = req.uri().path();
+    let path = req.uri().path().to_string();
     let method = req.method().clone();
+    let query = req.uri().query().map(str::to_owned);
+    let session_cookie = session_from_headers(req.headers());
+    let config = pm.config.clone();
 
     if method == Method::GET && path == "/metrics" {
         let entries = pm.get_proxy_entries().await;
@@ -159,22 +214,78 @@ async fn handle_web_request(
             .unwrap());
     }
 
-    let config = &pm.config;
-    if let (Some(u), Some(p)) = (&config.auth_username, &config.auth_password) {
-        if !check_web_auth(req.headers(), u, p) {
-            return Ok(Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .header("WWW-Authenticate", "Basic realm=\"Gyroxide Dashboard\"")
-                .header("Content-Type", "text/plain; charset=utf-8")
-                .body(Full::new(Bytes::from("401 Unauthorized: Credentials required\n")))
-                .unwrap());
+    let auth_enabled = config.auth_username.is_some() && config.auth_password.is_some();
+
+    if auth_enabled {
+        if (method == Method::GET || method == Method::HEAD) && path == "/login" {
+            let show_error = query
+                .as_deref()
+                .map(|q| q.split('&').any(|kv| kv == "error=1"))
+                .unwrap_or(false);
+            return Ok(html_response(dashboard::render_login(show_error)));
+        }
+
+        if method == Method::POST && path == "/admin/login" {
+            let body = match req.into_body().collect().await {
+                Ok(collected) => collected.to_bytes(),
+                Err(e) => {
+                    return Ok(Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Full::new(Bytes::from(format!("Body error: {}", e))))
+                        .unwrap());
+                }
+            };
+            let params = parse_form(&String::from_utf8_lossy(&body));
+            let username = params.iter().find(|(k, _)| k == "username").map(|(_, v)| v.as_str());
+            let password = params.iter().find(|(k, _)| k == "password").map(|(_, v)| v.as_str());
+
+            let credentials_ok = matches!(
+                (&config.auth_username, &config.auth_password, username, password),
+                (Some(expected_u), Some(expected_p), Some(input_u), Some(input_p))
+                    if input_u == expected_u && input_p == expected_p
+            );
+
+            if credentials_ok {
+                let token = sessions.issue();
+                info!("Dashboard login succeeded");
+                return Ok(redirect(
+                    "/admin",
+                    Some(format!(
+                        "{}={}; HttpOnly; SameSite=Lax; Path=/",
+                        SESSION_COOKIE, token
+                    )),
+                ));
+            }
+            warn!("Dashboard login failed");
+            return Ok(redirect("/login?error=1", None));
+        }
+
+        if method == Method::GET && path == "/admin/logout" {
+            if let Some(token) = &session_cookie {
+                sessions.revoke(token);
+            }
+            return Ok(redirect(
+                "/login",
+                Some(format!(
+                    "{}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+                    SESSION_COOKIE
+                )),
+            ));
+        }
+
+        let authenticated = session_cookie
+            .as_deref()
+            .map(|t| sessions.validate(t))
+            .unwrap_or(false);
+        if !authenticated {
+            return Ok(redirect("/login", None));
         }
     }
 
     if (method == Method::GET || method == Method::HEAD) && (path == "/" || path == "/admin") {
         let entries = pm.get_proxy_entries().await;
         let proxy_text = pm.get_raw_proxy_text().await;
-        let html = dashboard::render(&entries, &proxy_text, None);
+        let html = dashboard::render(&entries, &proxy_text, None, config.grafana_url.as_deref());
 
         return Ok(Response::builder()
             .status(StatusCode::OK)
@@ -263,7 +374,7 @@ async fn handle_web_request(
             args: &arg_refs,
             message: &message,
         };
-        let html = dashboard::render(&entries, &proxy_text, Some(flash));
+        let html = dashboard::render(&entries, &proxy_text, Some(flash), config.grafana_url.as_deref());
 
         return Ok(Response::builder()
             .status(StatusCode::OK)
@@ -283,22 +394,30 @@ fn parse_form_params(input: &str) -> (Option<String>, Option<String>) {
     let mut proxies = None;
     let mut mode = None;
 
-    if !input.contains('=') {
-        return (None, None);
-    }
-
-    for part in input.split('&') {
-        let mut key_val = part.splitn(2, '=');
-        let key = key_val.next().unwrap_or("");
-        let val = key_val.next().unwrap_or("");
+    for (key, val) in parse_form(input) {
         if key == "proxies" {
-            proxies = Some(urlencoding_decode(val));
+            proxies = Some(val);
         } else if key == "mode" {
-            mode = Some(urlencoding_decode(val));
+            mode = Some(val);
         }
     }
 
     (proxies, mode)
+}
+
+/// Parses an `application/x-www-form-urlencoded` body into key/value pairs.
+fn parse_form(input: &str) -> Vec<(String, String)> {
+    if !input.contains('=') {
+        return Vec::new();
+    }
+
+    input
+        .split('&')
+        .filter_map(|part| {
+            let (key, val) = part.split_once('=')?;
+            Some((urlencoding_decode(key), urlencoding_decode(val)))
+        })
+        .collect()
 }
 
 fn urlencoding_decode(input: &str) -> String {
@@ -320,36 +439,37 @@ fn urlencoding_decode(input: &str) -> String {
     String::from_utf8_lossy(&result).to_string()
 }
 
-fn check_web_auth(headers: &hyper::HeaderMap, expected_user: &str, expected_pass: &str) -> bool {
-    let header_val = match headers.get("authorization") {
-        Some(v) => match v.to_str() {
-            Ok(s) => s,
-            Err(_) => return false,
-        },
-        None => return false,
-    };
+fn html_response(body: String) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(Full::new(Bytes::from(body)))
+        .unwrap()
+}
 
-    if !header_val.starts_with("Basic ") {
-        return false;
+fn redirect(location: &str, set_cookie: Option<String>) -> Response<Full<Bytes>> {
+    let mut builder = Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("Location", location);
+    if let Some(cookie) = set_cookie {
+        builder = builder.header("Set-Cookie", cookie);
     }
+    builder
+        .body(Full::new(Bytes::from(format!("Redirecting to {}", location))))
+        .unwrap()
+}
 
-    let b64 = &header_val[6..].trim();
-    use base64::Engine;
-    let decoded = match base64::engine::general_purpose::STANDARD.decode(b64) {
-        Ok(d) => d,
-        Err(_) => return false,
-    };
-
-    let creds = match String::from_utf8(decoded) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-
-    let mut parts = creds.splitn(2, ':');
-    let u = parts.next().unwrap_or("");
-    let p = parts.next().unwrap_or("");
-
-    u == expected_user && p == expected_pass
+/// Extracts the session token from the request's `Cookie` header, if any.
+fn session_from_headers(headers: &hyper::HeaderMap) -> Option<String> {
+    let cookies = headers.get("cookie")?.to_str().ok()?;
+    cookies.split(';').find_map(|pair| {
+        let (name, value) = pair.trim().split_once('=')?;
+        if name == SESSION_COOKIE {
+            Some(value.to_string())
+        } else {
+            None
+        }
+    })
 }
 
 

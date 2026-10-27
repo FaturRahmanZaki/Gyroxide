@@ -632,6 +632,214 @@ dialog::backdrop { background: var(--backdrop); }
 .dialog-message { margin-top: 6px; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
+.topbar-monitoring-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.topbar-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.topbar-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--text-muted);
+}
+.topbar-btn-icon:hover {
+  background: var(--icon-hover-bg);
+  color: var(--text);
+}
+.topbar-btn-icon[hidden] {
+  display: none !important;
+}
+
+#monitoringDialog {
+  width: min(540px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+.monitoring-dialog-body {
+  padding: 22px;
+}
+.dialog-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dialog-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dialog-close-btn:hover {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+.form-group {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.form-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+.form-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.form-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus);
+}
+.form-help {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.monitoring-help-section {
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.monitoring-help-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-text);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+}
+.monitoring-help-toggle svg {
+  flex: none;
+}
+.monitoring-help-toggle .chevron-icon {
+  margin-left: auto;
+  transition: transform 0.2s ease;
+}
+.monitoring-help-toggle.expanded .chevron-icon {
+  transform: rotate(180deg);
+}
+.monitoring-help-content {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.monitoring-help-content[hidden] {
+  display: none;
+}
+.help-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.help-step-badge {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+.help-step-main {
+  flex: 1;
+  min-width: 0;
+}
+.help-step-main strong {
+  font-size: 12.5px;
+  color: var(--text);
+}
+.help-step-main p {
+  margin: 3px 0 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.help-endpoints {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.help-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.help-code {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+  overflow-x: auto;
+}
+.help-code code {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-family: inherit;
+}
+.help-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.help-list code {
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
 @media (max-width: 860px) {
   body { padding: 20px 14px 32px; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }

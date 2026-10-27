@@ -14,6 +14,7 @@ pub struct Config {
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
     pub block_private_ips: bool,
+    pub grafana_url: Option<String>,
 }
 
 impl Config {
@@ -73,6 +74,13 @@ impl Config {
             .parse::<bool>()
             .unwrap_or(true);
 
+        let grafana_url = env::var("GRAFANA_URL")
+            .ok()
+            .and_then(|v| {
+                let trimmed = v.trim().to_string();
+                if trimmed.is_empty() { None } else { Some(trimmed) }
+            });
+
         Ok(Self {
             port,
             metrics_port,
@@ -85,6 +93,7 @@ impl Config {
             auth_username,
             auth_password,
             block_private_ips,
+            grafana_url,
         })
     }
 }
