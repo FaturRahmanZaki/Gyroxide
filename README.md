@@ -11,7 +11,7 @@
 - **Auto-Parsing Format**: Seamlessly supports standard proxy provider formats like `ip:port:user:pass` without manual conversion.
 - **Smart Round Robin**: Intelligently rotates proxies per request and skips dead/unreachable proxies.
 - **Unlimited Failover Retry**: Automatically tries the next proxy in the list upon failure or timeout until a working proxy is found.
-- **Background Health Check & Auto Recovery**: Continuously probes dead proxies in the background; revived proxies rejoin rotation automatically.
+- **Background Health Check & Auto Recovery**: Continuously probes ALL proxies by fetching `HEALTH_CHECK_URL` through each one; dead proxies are marked dead, revived ones rejoin rotation automatically.
 - **HTTPS Tunneling (CONNECT)**: Full transparent HTTP `CONNECT` method support for TLS/SSL HTTPS traffic.
 - **Mini Web Dashboard UI**: Edit, paste, and reload proxy lists directly from your browser (`/admin`) with secure Basic Authentication.
 - **Prometheus & Grafana Ready**: Built-in `/metrics` endpoint to monitor traffic, response status codes, latencies, and proxy health in real-time.

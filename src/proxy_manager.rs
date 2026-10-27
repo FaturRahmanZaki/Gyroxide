@@ -149,9 +149,23 @@ impl ProxyManager {
     pub async fn mark_alive(&self, proxy_url: &str) {
         let mut proxies = self.proxies.write().await;
         if let Some(p) = proxies.iter_mut().find(|p| p.url == proxy_url) {
-            p.is_alive = true;
-            p.fail_count = 0;
-            info!("Proxy ALIVE [{}]", proxy_url);
+            if !p.is_alive {
+                p.is_alive = true;
+                p.fail_count = 0;
+                info!("Proxy ALIVE [{}]", proxy_url);
+            }
+        }
+    }
+
+    /// Marks a proxy dead immediately, bypassing `max_failures`.
+    /// Used when a full health check fails — that is definitive, unlike a single request error.
+    pub async fn mark_dead_now(&self, proxy_url: &str) {
+        let mut proxies = self.proxies.write().await;
+        if let Some(p) = proxies.iter_mut().find(|p| p.url == proxy_url) {
+            if p.is_alive {
+                p.is_alive = false;
+                warn!("Proxy DEAD [{}] (failed health check)", proxy_url);
+            }
         }
     }
 
@@ -286,24 +300,32 @@ impl ProxyManager {
     }
 
     async fn run_health_check(self: Arc<Self>) {
-        let dead_proxies: Vec<ProxyEntry> = {
-            let proxies = self.proxies.read().await;
-            proxies.iter().filter(|p| !p.is_alive).cloned().collect()
-        };
-
-        if dead_proxies.is_empty() {
+        let entries = self.get_proxy_entries().await;
+        if entries.is_empty() {
             return;
         }
 
-        info!("Health check: testing {} dead proxy/proxies", dead_proxies.len());
-
         let timeout = Duration::from_secs(self.config.request_timeout_secs);
+        let health_url = self.config.health_check_url.clone();
 
-        for proxy in dead_proxies {
-            let url = proxy.url.clone();
-            let alive = test_proxy_tcp(&proxy, timeout).await;
-            if alive {
-                self.mark_alive(&url).await;
+        info!(
+            "Health check: testing {} proxy/proxies via {}",
+            entries.len(),
+            health_url
+        );
+
+        let mut set = tokio::task::JoinSet::new();
+        for proxy in entries {
+            set.spawn(check_proxy_health(proxy, health_url.clone(), timeout));
+        }
+
+        while let Some(joined) = set.join_next().await {
+            if let Ok((proxy, alive)) = joined {
+                if alive {
+                    self.mark_alive(&proxy.url).await;
+                } else {
+                    self.mark_dead_now(&proxy.url).await;
+                }
             }
         }
 
@@ -312,12 +334,21 @@ impl ProxyManager {
     }
 }
 
-async fn test_proxy_tcp(proxy: &ProxyEntry, timeout: Duration) -> bool {
-    let addr = format!("{}:{}", proxy.host, proxy.port);
-    matches!(
-        tokio::time::timeout(timeout, tokio::net::TcpStream::connect(&addr)).await,
-        Ok(Ok(_))
-    )
+/// Fetches the configured health check URL through the given proxy.
+/// A proxy is considered alive only if the full request round-trip succeeds,
+/// not merely because its TCP port is open.
+async fn check_proxy_health(proxy: ProxyEntry, health_url: String, timeout: Duration) -> (ProxyEntry, bool) {
+    let alive = match reqwest::Proxy::all(&proxy.url) {
+        Ok(p) => match reqwest::Client::builder().proxy(p).timeout(timeout).build() {
+            Ok(client) => match client.get(&health_url).send().await {
+                Ok(resp) => resp.status().is_success(),
+                Err(_) => false,
+            },
+            Err(_) => false,
+        },
+        Err(_) => false,
+    };
+    (proxy, alive)
 }
 
 async fn load_proxies(path: &str) -> Result<Vec<ProxyEntry>> {

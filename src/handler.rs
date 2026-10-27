@@ -16,6 +16,33 @@ use crate::proxy_manager::{ProxyEntry, ProxyManager, ProxyType};
 
 pub type BoxResponse = Response<BoxBody<Bytes, hyper::Error>>;
 
+/// Classifies upstream failures so that only genuine proxy problems
+/// count toward a proxy's fail_count. A target site being down or slow
+/// through a healthy proxy must not get that proxy marked dead.
+#[derive(Debug)]
+enum UpstreamError {
+    /// The proxy could not be reached, did not answer, or timed out.
+    ProxyUnavailable(String),
+    /// The proxy is reachable; the failure is on the target side (or ambiguous).
+    RequestFailed(String),
+}
+
+impl UpstreamError {
+    fn is_proxy_unavailable(&self) -> bool {
+        matches!(self, UpstreamError::ProxyUnavailable(_))
+    }
+}
+
+impl std::fmt::Display for UpstreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpstreamError::ProxyUnavailable(msg) | UpstreamError::RequestFailed(msg) => {
+                write!(f, "{}", msg)
+            }
+        }
+    }
+}
+
 pub async fn handle_request(
     req: Request<Incoming>,
     proxy_manager: Arc<ProxyManager>,
@@ -117,7 +144,9 @@ pub async fn handle_request(
                     err = %e,
                     "proxy failed"
                 );
-                proxy_manager.mark_dead(&proxy_url).await;
+                if e.is_proxy_unavailable() {
+                    proxy_manager.mark_dead(&proxy_url).await;
+                }
             }
         }
     }
@@ -205,7 +234,9 @@ async fn handle_connect(
                     err = %e,
                     "CONNECT failed"
                 );
-                proxy_manager.mark_dead(&proxy_url).await;
+                if e.is_proxy_unavailable() {
+                    proxy_manager.mark_dead(&proxy_url).await;
+                }
             }
         }
     }
@@ -221,22 +252,24 @@ async fn handle_connect(
     ))
 }
 
-async fn connect_upstream(proxy: &ProxyEntry, target: &str, timeout: Duration) -> Result<TcpStream> {
-    tokio::time::timeout(timeout, async {
-        match proxy.proxy_type {
-            ProxyType::Http => connect_via_http_proxy(proxy, target).await,
-            ProxyType::Socks5 => connect_via_socks5(proxy, target).await,
-        }
-    })
-    .await
-    .map_err(|_| anyhow!("connection timed out"))?
+async fn connect_upstream(proxy: &ProxyEntry, target: &str, timeout: Duration) -> Result<TcpStream, UpstreamError> {
+    match proxy.proxy_type {
+        ProxyType::Http => connect_via_http_proxy(proxy, target, timeout).await,
+        ProxyType::Socks5 => connect_via_socks5(proxy, target, timeout).await,
+    }
 }
 
-async fn connect_via_http_proxy(proxy: &ProxyEntry, target: &str) -> Result<TcpStream> {
+async fn connect_via_http_proxy(
+    proxy: &ProxyEntry,
+    target: &str,
+    timeout: Duration,
+) -> Result<TcpStream, UpstreamError> {
     let addr = format!("{}:{}", proxy.host, proxy.port);
-    let mut stream = TcpStream::connect(&addr)
+
+    let mut stream = tokio::time::timeout(timeout, TcpStream::connect(&addr))
         .await
-        .map_err(|e| anyhow!("cannot reach proxy {}: {}", addr, e))?;
+        .map_err(|_| UpstreamError::ProxyUnavailable(format!("connection to proxy {} timed out", addr)))?
+        .map_err(|e| UpstreamError::ProxyUnavailable(format!("cannot reach proxy {}: {}", addr, e)))?;
 
     let mut req = format!(
         "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n"
@@ -249,41 +282,83 @@ async fn connect_via_http_proxy(proxy: &ProxyEntry, target: &str) -> Result<TcpS
     }
 
     req.push_str("\r\n");
-    stream.write_all(req.as_bytes()).await?;
 
-    let mut buf = vec![0u8; 4096];
-    let n = stream.read(&mut buf).await?;
-    let resp = String::from_utf8_lossy(&buf[..n]);
+    let resp = tokio::time::timeout(timeout, async {
+        stream.write_all(req.as_bytes()).await?;
+        let mut buf = vec![0u8; 4096];
+        let n = stream.read(&mut buf).await?;
+        Ok::<_, std::io::Error>(String::from_utf8_lossy(&buf[..n]).to_string())
+    })
+    .await
+    .map_err(|_| UpstreamError::ProxyUnavailable(format!("proxy {} timed out during CONNECT", addr)))?
+    .map_err(|e| UpstreamError::ProxyUnavailable(format!("proxy {} I/O error: {}", addr, e)))?;
 
     if resp.starts_with("HTTP/1.1 200") || resp.starts_with("HTTP/1.0 200") {
         Ok(stream)
+    } else if resp.is_empty() {
+        // Connected but the proxy sent nothing usable — treat it as unreachable.
+        Err(UpstreamError::ProxyUnavailable(format!(
+            "proxy {} sent no response to CONNECT",
+            addr
+        )))
     } else {
+        // The proxy itself answered (e.g. 502/403/407): it is alive, the target
+        // side (or its own policy) refused the tunnel.
         let line = resp.lines().next().unwrap_or("unknown").to_string();
-        Err(anyhow!("HTTP proxy CONNECT rejected: {}", line))
+        Err(UpstreamError::RequestFailed(format!(
+            "HTTP proxy CONNECT rejected: {}",
+            line
+        )))
     }
 }
 
-async fn connect_via_socks5(proxy: &ProxyEntry, target: &str) -> Result<TcpStream> {
+async fn connect_via_socks5(
+    proxy: &ProxyEntry,
+    target: &str,
+    timeout: Duration,
+) -> Result<TcpStream, UpstreamError> {
     use tokio_socks::tcp::Socks5Stream;
 
-    let (host, port) = split_host_port(target)?;
+    let (host, port) = split_host_port(target)
+        .map_err(|e| UpstreamError::RequestFailed(e.to_string()))?;
     let proxy_addr = format!("{}:{}", proxy.host, proxy.port);
 
-    let stream = match (&proxy.username, &proxy.password) {
-        (Some(user), Some(pass)) => {
-            Socks5Stream::connect_with_password(
-                proxy_addr.as_str(),
-                (host.as_str(), port),
-                user.as_str(),
-                pass.as_str(),
-            )
-            .await
-            .map_err(|e| anyhow!("SOCKS5 auth connect failed: {}", e))?
+    let connect = async {
+        match (&proxy.username, &proxy.password) {
+            (Some(user), Some(pass)) => {
+                Socks5Stream::connect_with_password(
+                    proxy_addr.as_str(),
+                    (host.as_str(), port),
+                    user.as_str(),
+                    pass.as_str(),
+                )
+                .await
+            }
+            _ => Socks5Stream::connect(proxy_addr.as_str(), (host.as_str(), port)).await,
         }
-        _ => Socks5Stream::connect(proxy_addr.as_str(), (host.as_str(), port))
-            .await
-            .map_err(|e| anyhow!("SOCKS5 connect failed: {}", e))?,
     };
+
+    let stream = tokio::time::timeout(timeout, connect)
+        .await
+        .map_err(|_| {
+            UpstreamError::ProxyUnavailable(format!(
+                "proxy {} timed out during SOCKS5 handshake",
+                proxy_addr
+            ))
+        })?
+        .map_err(|e| match &e {
+            // The proxy answered with a SOCKS5 reply (e.g. target unreachable):
+            // it is alive, the target side failed.
+            tokio_socks::Error::GeneralSocksServerFailure
+            | tokio_socks::Error::ConnectionNotAllowedByRuleset
+            | tokio_socks::Error::NetworkUnreachable
+            | tokio_socks::Error::HostUnreachable
+            | tokio_socks::Error::ConnectionRefused
+            | tokio_socks::Error::TtlExpired => {
+                UpstreamError::RequestFailed(format!("SOCKS5 target refused: {}", e))
+            }
+            _ => UpstreamError::ProxyUnavailable(format!("SOCKS5 connect failed: {}", e)),
+        })?;
 
     Ok(stream.into_inner())
 }
@@ -293,18 +368,20 @@ async fn forward_http(
     body: Bytes,
     proxy: &ProxyEntry,
     timeout: Duration,
-) -> Result<BoxResponse> {
-    let reqwest_proxy = reqwest::Proxy::all(&proxy.url)
-        .map_err(|e| anyhow!("invalid proxy URL '{}': {}", proxy.url, e))?;
+) -> Result<BoxResponse, UpstreamError> {
+    let reqwest_proxy = reqwest::Proxy::all(&proxy.url).map_err(|e| {
+        UpstreamError::ProxyUnavailable(format!("invalid proxy URL '{}': {}", proxy.url, e))
+    })?;
 
     let client = reqwest::Client::builder()
         .proxy(reqwest_proxy)
         .timeout(timeout)
         .build()
-        .map_err(|e| anyhow!("client build failed: {}", e))?;
+        .map_err(|e| UpstreamError::ProxyUnavailable(format!("client build failed: {}", e)))?;
 
     let uri = parts.uri.to_string();
-    let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())?;
+    let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
+        .map_err(|e| UpstreamError::RequestFailed(format!("invalid method: {}", e)))?;
 
     let mut builder = client.request(method, &uri);
 
@@ -319,17 +396,20 @@ async fn forward_http(
         builder = builder.body(body);
     }
 
-    let resp = builder
-        .send()
-        .await
-        .map_err(|e| anyhow!("request error: {}", e))?;
+    let resp = match builder.send().await {
+        Ok(resp) => resp,
+        Err(e) if e.is_connect() || e.is_timeout() => {
+            return Err(UpstreamError::ProxyUnavailable(format!("request error: {}", e)))
+        }
+        Err(e) => return Err(UpstreamError::RequestFailed(format!("request error: {}", e))),
+    };
 
     let status = resp.status();
     let headers = resp.headers().clone();
     let body_bytes = resp
         .bytes()
         .await
-        .map_err(|e| anyhow!("response read error: {}", e))?;
+        .map_err(|e| UpstreamError::RequestFailed(format!("response read error: {}", e)))?;
 
     let mut rb = Response::builder().status(status.as_u16());
     for (name, value) in &headers {
@@ -339,7 +419,8 @@ async fn forward_http(
         rb = rb.header(name, value);
     }
 
-    Ok(rb.body(full_body(body_bytes))?)
+    rb.body(full_body(body_bytes))
+        .map_err(|e| UpstreamError::RequestFailed(e.to_string()))
 }
 
 fn is_hop_by_hop(name: &str) -> bool {
